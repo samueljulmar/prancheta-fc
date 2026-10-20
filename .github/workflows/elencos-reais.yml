@@ -30,6 +30,7 @@ jobs:
       - name: Gerar jogadores.csv
         run: |
           node tools/gerar-elencos.js dados saida
+          cat saida/relatorio.txt
           { echo '```'; cat saida/relatorio.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
