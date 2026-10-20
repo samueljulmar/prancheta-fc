@@ -78,7 +78,7 @@
 
   const SLOT_PRIORITY = { G: 0, A: 1, Z: 2, M: 3, L: 4 };
 
-  FB.fillSlots = (state, formation, pool) => {
+  FB.fillSlots = (state, formation, pool, score = FB.effective) => {
     const slots = FB.slotsOf(formation);
     const lineup = new Array(slots.length).fill(null);
     const used = new Set();
@@ -89,7 +89,7 @@
         let best = null, bv = -1;
         for (const p of pool) {
           if (used.has(p.id) || (pass === 0 && p.pos !== slots[i])) continue;
-          const v = FB.effective(p, slots[i]);
+          const v = score(p, slots[i]);
           if (v > bv) { bv = v; best = p; }
         }
         if (best) { lineup[i] = best.id; used.add(best.id); }
@@ -99,8 +99,44 @@
   };
 
   // Melhor time disponível (não escala quem joga no sacrifício).
-  FB.bestLineup = (state, team, key, formation = team.formation) =>
-    FB.fillSlots(state, formation, team.squad.map(id => state.players[id]).filter(p => FB.available(p, key) && !p.inj));
+  // opts.min: energia mínima desejada (rodízio); opts.rest: poupar os principais jogadores.
+  FB.bestLineup = (state, team, key, formation = team.formation, opts = {}) => {
+    const pool = team.squad.map(id => state.players[id]).filter(p => FB.available(p, key) && !p.inj);
+    const key13 = opts.rest ? new Set(pool.slice().sort((a, b) => b.ovr - a.ovr).slice(0, 11).map(p => p.id)) : null;
+    const score = (p, slot) => {
+      let v = FB.effective(p, slot);
+      if (opts.min && p.en < opts.min) v *= 0.82;
+      if (key13 && key13.has(p.id)) v *= 0.8;
+      return v;
+    };
+    return FB.fillSlots(state, formation, pool, score);
+  };
+
+  // Banco de reservas para a partida (até 12): goleiro reserva primeiro, depois os melhores.
+  FB.MAX_BENCH = 12;
+  FB.autoBench = (state, team, lineup, key) => {
+    const pool = team.squad.map(id => state.players[id])
+      .filter(p => !lineup.includes(p.id) && FB.available(p, key) && !p.inj).sort((a, b) => b.ovr - a.ovr);
+    const gk = pool.find(p => p.pos === 'G');
+    const rest = pool.filter(p => p !== gk);
+    return (gk ? [gk] : []).concat(rest).slice(0, FB.MAX_BENCH).map(p => p.id);
+  };
+  FB.matchBench = (state, team, lineup, key) => {
+    if (team.id === state.userId && team.bench && team.bench.length) {
+      const ok = team.bench.filter(pid => team.squad.includes(pid) && !lineup.includes(pid) && FB.available(state.players[pid], key) && !state.players[pid].inj);
+      if (ok.length) return ok.slice(0, FB.MAX_BENCH);
+    }
+    return FB.autoBench(state, team, lineup, key);
+  };
+
+  // Instruções táticas (com valores padrão para saves antigos).
+  FB.TACTICS = {
+    tempo: { label: 'Ritmo', opts: { lento: 'Cadenciado', normal: 'Normal', rapido: 'Acelerado' } },
+    line: { label: 'Linha defensiva', opts: { baixa: 'Recuada', media: 'Média', alta: 'Adiantada' } },
+    focus: { label: 'Foco do ataque', opts: { misto: 'Variado', lados: 'Pelos lados', meio: 'Pelo meio', contra: 'Contra-ataque' } },
+    passing: { label: 'Passes', opts: { curto: 'Curtos', misto: 'Mistos', direto: 'Bola longa' } },
+  };
+  FB.tac = (team, k) => team[k] || { tempo: 'normal', line: 'media', focus: 'misto', passing: 'misto', press: 'media', posture: 'equilibrado' }[k];
 
   FB.reassign = (state, team, formation) => {
     const current = team.lineup.filter(id => id != null).map(id => state.players[id]);
@@ -501,6 +537,10 @@
 
   // Executado quando a última rodada de uma fase termina.
   FB.closePhase = (state, comp, ph) => {
+    closePhaseInner(state, comp, ph);
+    if (comp.teams.includes(state.userId) && comp.kind !== 'liga') FB.boardCompUpdate(state, comp);
+  };
+  const closePhaseInner = (state, comp, ph) => {
     const P = comp.phases[ph];
     const T = state.teams;
     const prizes = FB.PHASE_PRIZE[comp.key] || FB.PHASE_PRIZE[comp.fmt] || [];
@@ -517,14 +557,14 @@
         FB.news(state, 'noticia', `${T[id].name} é campeão: ${comp.name}!`, `O ${T[id].name} conquistou o título da ${comp.name} ${state.season}.`, { team: id });
       }
       if (id === state.userId) {
-        FB.msg(state, `🏆 Campeão: ${comp.name}!`, `Seu ${T[id].name} conquistou a ${comp.name}! A diretoria e a torcida estão em festa.`);
+        FB.msg(state, `🏆 Campeão: ${comp.name}!`, `Seu ${T[id].name} conquistou a ${comp.name}! A diretoria e a torcida estão em festa.`, { from: 'Diretoria' });
         state.board.conf = clamp(state.board.conf + (comp.kind === 'estadual' ? 6 : comp.kind === 'liga' ? 10 : 15), 0, 100);
       }
     };
     if (P.t === 'ko') {
       const out = P.ties.map(t => (t.w === t.a ? t.b : t.a));
       if (out.includes(state.userId)) {
-        FB.msg(state, comp.name, `Seu time foi eliminado na fase: ${comp.phaseNames[ph]}.`);
+        FB.msg(state, comp.name, `Seu time foi eliminado na fase: ${comp.phaseNames[ph]}.`, { from: 'Auxiliar técnico' });
         if (comp.kind !== 'estadual') state.board.conf = clamp(state.board.conf - (comp.kind === 'continental' ? 4 : 3), 0, 100);
       }
     }
@@ -695,10 +735,13 @@
         const en = {};
         for (const pid of t.squad) en[pid] = state.players[pid].en;
         const lineup = t.lineup.slice();
+        const cap = t.captain != null && lineup.includes(t.captain) ? state.players[t.captain] : null;
         return {
-          tid, i, home: i === 0, formation: t.formation, posture: t.posture, press: t.press || 'media', boost: 1,
+          tid, i, home: i === 0, formation: t.formation, posture: FB.tac(t, 'posture'), press: FB.tac(t, 'press'),
+          tempo: FB.tac(t, 'tempo'), line: FB.tac(t, 'line'), focus: FB.tac(t, 'focus'), passing: FB.tac(t, 'passing'),
+          boost: 1 + (cap && cap.mo >= 60 ? 0.01 : 0),
           cohesion: tid === state.userId && t.training === 'tatico' ? 1.025 : 1, lineup,
-          bench: t.squad.filter(pid => !lineup.includes(pid) && FB.available(state.players[pid], comp.key) && !state.players[pid].inj),
+          bench: FB.matchBench(state, t, lineup, comp.key),
           en, goals: 0, subs: 0, played: new Set(lineup.filter(x => x != null)),
           yellow: {}, sent: [], hurt: new Set(), scorers: [],
         };
@@ -707,6 +750,25 @@
 
     get user() { return this.sides.findIndex(s => s.tid === this.state.userId); }
     p(pid) { return this.state.players[pid]; }
+
+    // Efeito do estilo de jogo, considerando o estilo do adversário.
+    styleMods(s, o) {
+      let att = 1, def = 1, mid = 1;
+      if (s.tempo === 'rapido') att *= 1.04;
+      else if (s.tempo === 'lento') { att *= 0.96; def *= 1.03; }
+      if (s.line === 'alta') { mid *= 1.04; if (o.focus === 'contra') def *= 0.92; }
+      else if (s.line === 'baixa') { def *= 1.05; att *= 0.96; if (o.focus === 'contra') def *= 1.03; }
+      if (s.passing === 'curto') { mid *= 1.05; att *= 0.98; }
+      else if (s.passing === 'direto') { att *= 1.03; mid *= 0.96; }
+      const f = FB.FORMATIONS[s.formation], fo = FB.FORMATIONS[o.formation];
+      if (s.focus === 'lados') att *= fo.L === 0 ? 1.07 : f.L === 0 ? 0.96 : 1.02;
+      else if (s.focus === 'meio') att *= f.M >= fo.M ? 1.05 : 0.97;
+      else if (s.focus === 'contra') {
+        att *= o.line === 'alta' || o.posture === 'ofensivo' ? 1.09 : o.line === 'baixa' || o.posture === 'defensivo' ? 0.92 : 1;
+        mid *= 0.95;
+      }
+      return { att, def, mid };
+    }
 
     rating(side) {
       const slots = FB.slotsOf(side.formation);
@@ -720,7 +782,8 @@
         else { att += e * ATT_W[pos]; def += e * DEF_W[pos]; mid += e * MID_W[pos]; }
       });
       const k = side.posture === 'ofensivo' ? [1.1, 0.9] : side.posture === 'defensivo' ? [0.88, 1.1] : [1, 1];
-      return { att: att / 4.8 * k[0], def: (def + gk * 1.2) / 6.5 * k[1], mid };
+      const m = this.styleMods(side, this.sides[1 - side.i]);
+      return { att: att / 4.8 * k[0] * m.att, def: (def + gk * 1.2) / 6.5 * k[1] * m.def, mid: mid * m.mid };
     }
 
     ev(type, side, text, pid) {
@@ -748,7 +811,7 @@
       for (let i = 0; i < 2; i++) {
         const s = this.sides[i], o = this.sides[1 - i];
         const share = r[i].mid / Math.max(1, r[i].mid + r[1 - i].mid);
-        let lambda = 1.2 * Math.pow(r[i].att / Math.max(1, r[1 - i].def), 2.3) * Math.pow(share * 2, 0.6);
+        let lambda = 1.1 * Math.pow(r[i].att / Math.max(1, r[1 - i].def), 2.3) * Math.pow(share * 2, 0.6);
         lambda *= o.press === 'alta' ? 0.94 : o.press === 'baixa' ? 1.05 : 1;
         lambda *= this.comp.neutral ? 1 : s.home ? 1.12 : 0.95;
         const pr = lambda / 90;
@@ -766,7 +829,8 @@
         if (Math.random() < 0.0014) this.injury(s);
       }
       for (const s of this.sides) {
-        const drain = 0.2 + (s.posture === 'ofensivo' ? 0.05 : 0) + (s.press === 'alta' ? 0.07 : s.press === 'baixa' ? -0.04 : 0);
+        const drain = 0.2 + (s.posture === 'ofensivo' ? 0.05 : 0) + (s.press === 'alta' ? 0.07 : s.press === 'baixa' ? -0.04 : 0) +
+          (s.tempo === 'rapido' ? 0.04 : s.tempo === 'lento' ? -0.03 : 0) + (s.line === 'alta' ? 0.02 : 0);
         for (const pid of s.lineup) if (pid != null) s.en[pid] = Math.max(0, s.en[pid] - drain - Math.random() * 0.06);
         if (s.i !== this.user) this.aiThink(s);
       }
@@ -823,9 +887,30 @@
       if (kind === 'cobrar') b = diff < 0 ? rf(0.02, 0.06) : diff > 0 ? rf(-0.04, 0.01) : rf(-0.01, 0.04);
       else if (kind === 'elogiar') b = diff > 0 ? rf(0.01, 0.04) : diff < 0 ? rf(-0.03, 0.01) : rf(0, 0.03);
       else b = rf(0, 0.02);
-      s.boost = clamp(1 + b, 0.95, 1.07);
+      s.boost = clamp(s.boost + b, 0.93, 1.1);
       const reac = b >= 0.03 ? 'Os jogadores voltam motivados!' : b >= 0 ? 'O time ouviu com atenção.' : 'O grupo não reagiu bem à conversa.';
-      this.ev('talk', sideIdx, `Preleção: ${reac}`);
+      this.ev('talk', sideIdx, `Intervalo: ${reac}`);
+      return b;
+    }
+
+    // Preleção antes do jogo: o efeito depende de quem é o favorito e do moral do grupo.
+    preTalk(sideIdx, kind) {
+      const s = this.sides[sideIdx];
+      const st = this.state;
+      const mine = FB.teamStrength(st, st.teams[s.tid]);
+      const opp = FB.teamStrength(st, st.teams[this.sides[1 - sideIdx].tid]);
+      const fav = mine - opp;
+      const mo = st.teams[s.tid].squad.reduce((a, pid) => a + st.players[pid].mo, 0) / st.teams[s.tid].squad.length;
+      let b;
+      if (kind === 'motivar') b = fav < -3 ? rf(0.03, 0.06) : fav > 3 ? rf(0, 0.02) : rf(0.01, 0.04);
+      else if (kind === 'cobrar') b = fav > 3 ? rf(0.02, 0.05) : fav < -3 ? rf(-0.03, 0.01) : rf(-0.01, 0.04);
+      else if (kind === 'tranquilo') b = fav < -3 ? rf(0.01, 0.03) : mo < 45 ? rf(0.02, 0.04) : rf(0, 0.02);
+      else if (kind === 'respeito') b = fav > 6 ? rf(0.02, 0.04) : rf(0, 0.02);
+      else b = 0;
+      if (mo < 40 && kind === 'cobrar') b -= 0.02;
+      s.boost = clamp(s.boost + b, 0.93, 1.1);
+      const reac = b >= 0.035 ? 'O vestiário pegou fogo: time ligado!' : b >= 0.01 ? 'O grupo entrou concentrado.' : b >= 0 ? 'Reação neutra à conversa.' : 'A conversa não caiu bem no elenco.';
+      if (kind) this.ev('talk', sideIdx, `Preleção: ${reac}`);
       return b;
     }
 
@@ -942,13 +1027,19 @@
 
   // ---------- Datas ----------
 
-  FB.startDate = state => {
+  // opts.manual: o usuário já montou o time na tela de pré-jogo (não aplica o rodízio automático).
+  FB.startDate = (state, opts = {}) => {
     const fixtures = FB.dateFixtures(state);
     const notes = [];
     const matches = fixtures.map(f => {
       for (const tid of [f.h, f.a]) {
         const t = state.teams[tid];
         if (tid === state.userId) {
+          const prio = (t.prio || {})[f.comp.key] || 'normal';
+          if (t.rotation && t.rotation.auto && !opts.manual) {
+            t.lineup = FB.bestLineup(state, t, f.comp.key, t.formation, { min: t.rotation.min || 65, rest: prio === 'poupar' });
+            t.bench = FB.autoBench(state, t, t.lineup, f.comp.key);
+          }
           for (const c of FB.fixLineup(state, t, f.comp.key)) {
             const p = state.players[c.out];
             notes.push(`${p.n} ${p.inj ? 'está lesionado' : 'está suspenso'}` + (c.in != null ? ` — entra ${state.players[c.in].n}` : ''));
@@ -970,9 +1061,42 @@
 
   FB.aiPrepare = (state, team, oppId, key) => {
     const mine = FB.teamStrength(state, team);
-    const opp = FB.teamStrength(state, state.teams[oppId]);
+    const o = state.teams[oppId];
+    const opp = FB.teamStrength(state, o);
     team.posture = opp - mine > 5 ? 'defensivo' : mine - opp > 6 ? 'ofensivo' : 'equilibrado';
-    team.lineup = FB.bestLineup(state, team, key);
+    team.line = team.posture === 'defensivo' ? 'baixa' : team.posture === 'ofensivo' ? 'alta' : 'media';
+    team.focus = team.posture === 'defensivo' ? 'contra' : FB.FORMATIONS[o.formation].L === 0 ? 'lados' : pick(['misto', 'misto', 'lados', 'meio']);
+    team.tempo = 'normal';
+    team.passing = 'misto';
+    // Clubes grandes poupam titulares no começo dos estaduais.
+    const comp = state.comps[key];
+    const rest = comp && comp.kind === 'estadual' && team.div === 0 && comp.md < 4;
+    team.lineup = FB.bestLineup(state, team, key, team.formation, { min: 60, rest });
+  };
+
+  // Dicas do auxiliar técnico para o próximo jogo.
+  FB.scoutReport = (state, tid, oppId) => {
+    const t = state.teams[tid], o = state.teams[oppId];
+    const tips = [];
+    const fo = FB.FORMATIONS[o.formation], f = FB.FORMATIONS[t.formation];
+    const so = FB.teamStrength(state, o), st = FB.teamStrength(state, t);
+    if (so - st > 4) tips.push('O adversário é mais forte. Linha recuada e contra-ataque costumam funcionar.');
+    if (st - so > 4) tips.push('Somos favoritos. Pressão alta e ritmo acelerado podem decidir cedo.');
+    if (fo.L === 0) tips.push(`Eles jogam no ${o.formation}, sem laterais: atacar pelos lados é uma boa saída.`);
+    if (fo.M > f.M) tips.push(`O ${o.formation} deles tem mais gente no meio (${fo.M} x ${f.M}). Evite o foco pelo meio ou reforce o setor.`);
+    if (fo.A >= 3) tips.push('Eles atacam com três: cuidado com a linha adiantada.');
+    const tired = t.lineup.filter(id => id != null && state.players[id].en < 70).length;
+    if (tired >= 3) tips.push(`${tired} titulares estão com menos de 70% de energia. Considere rodar o elenco ou usar ritmo cadenciado.`);
+    const out = o.squad.map(id => state.players[id]).filter(p => p.inj && !p.inj.play).sort((a, b) => b.ovr - a.ovr);
+    if (out.length) tips.push(`Desfalques deles: ${out.slice(0, 3).map(p => p.n).join(', ')}${out.length > 3 ? ' e outros' : ''}.`);
+    const form = (o.form || []).slice(-5);
+    if (form.length >= 3) {
+      const w = form.filter(x => x === 'V').length;
+      if (w >= 4) tips.push('O adversário vive grande fase.');
+      else if (form.filter(x => x === 'D').length >= 3) tips.push('O adversário vem de resultados ruins.');
+    }
+    if (!tips.length) tips.push('Jogo equilibrado. Mantenha o plano e aproveite as oportunidades.');
+    return tips;
   };
 
   FB.finishDate = (state, day) => {
@@ -991,7 +1115,7 @@
     }
 
     const um = matches.find(m => m.user >= 0);
-    if (um) FB.boardAfterMatch(state, um);
+    if (um) { FB.boardAfterMatch(state, um); FB.fanMail(state, um); }
     FB.newsAfterDate(state, matches);
 
     const today = date.day;
@@ -1079,7 +1203,7 @@
     if (m.user >= 0) {
       for (const r of m.sides[m.user].sent) {
         const p = state.players[r.pid];
-        FB.msg(state, 'Suspensão', `${p.n} foi expulso e cumprirá ${p.sus[key]} jogo(s) de suspensão na ${comp.name}.`);
+        FB.msg(state, 'Suspensão', `${p.n} foi expulso e cumprirá ${p.sus[key]} jogo(s) de suspensão na ${comp.name}.`, { from: 'Auxiliar técnico' });
       }
     }
   };
@@ -1140,6 +1264,7 @@
     const m0 = FB.dateOf(state, today).getMonth();
     const m1 = FB.dateOf(state, nextDay).getMonth() + (FB.dateOf(state, nextDay).getFullYear() > state.season ? 12 : 0);
     for (let m = m0 + 1; m <= m1; m++) {
+      FB.boardMonthly(state, m - 1);
       for (const t of state.teams) {
         FB.money(state, t.id, FB.TV_MONTH[t.div], 'tv');
         FB.money(state, t.id, Math.round(FB.SPONSOR_K[t.div] * t.fans / 1000), 'patrocinio');
@@ -1197,7 +1322,7 @@
     state.fired = true;
     state.jobOffers = FB.jobOffers(state, false);
     const t = state.teams[state.userId];
-    FB.msg(state, 'Você foi demitido', `A diretoria do ${t.name} perdeu a paciência e decidiu trocar o comando técnico.`);
+    FB.msg(state, 'Você foi demitido', `A diretoria do ${t.name} perdeu a paciência e decidiu trocar o comando técnico.`, { from: 'Diretoria' });
     FB.news(state, 'noticia', `${t.name} demite ${state.coach}`, 'Pressionada pelos resultados, a diretoria anunciou a saída do treinador.', { team: t.id });
   };
 
@@ -1222,7 +1347,7 @@
     const t = state.teams[tid];
     FB.fixLineup(state, t);
     FB.setObjective(state);
-    FB.msg(state, `Novo desafio: ${t.name}`, `Você assumiu o ${t.name}. Objetivo: ${state.board.text}.`);
+    FB.boardSetup(state);
     FB.news(state, 'noticia', `${t.name} anuncia ${state.coach}`, `${state.coach} é o novo treinador do ${t.name}.`, { team: tid });
     FB.save(state);
   };
@@ -1234,7 +1359,8 @@
     t.formation = '4-4-2';
     t.lineup = FB.bestLineup(state, t);
     FB.setObjective(state);
-    FB.msg(state, `Bem-vindo ao ${t.name}!`, `A diretoria apresentou ${state.coach} como novo treinador. Objetivo na ${FB.DIV_NAMES[t.div]}: ${state.board.text}.`);
+    FB.msg(state, `Bem-vindo ao ${t.name}!`, `A diretoria apresentou ${state.coach} como novo treinador. Objetivo na ${FB.DIV_NAMES[t.div]}: ${state.board.text}.`, { from: 'Diretoria' });
+    FB.boardSetup(state);
     FB.news(state, 'noticia', `${t.name} tem novo treinador`, `${state.coach} assume o ${t.name} para a temporada ${state.season}.`, { team: teamId });
     FB.news(state, 'atualizacao', `Começa a temporada ${state.season}`, 'Os estaduais abrem o calendário. A janela de transferências fica aberta até o início de abril.');
   };
@@ -1306,9 +1432,12 @@
     if (p.t == null) {
       const bonus = sal * 2;
       if (me.cash < bonus) return { ok: false, msg: 'Caixa insuficiente para as luvas.' };
+      const ap = FB.boardApproves(state, bonus, sal);
+      if (!ap.ok) return ap;
       FB.transfer(state, pid, me.id, 0, sal);
       FB.money(state, me.id, -bonus, 'compras');
-      FB.msg(state, 'Contratação', `${p.n} assinou com o clube. Luvas: ${FB.fmtMoney(bonus)}.`);
+      FB.boardSpend(state, bonus);
+      FB.msg(state, 'Contratação', `${p.n} assinou com o clube. Luvas: ${FB.fmtMoney(bonus)}.`, { from: 'Mercado' });
       FB.news(state, 'mercado', `${me.name} contrata ${p.n}`, `O ${me.name} acertou com ${p.n}, que estava sem clube.`, { team: me.id });
       return { ok: true };
     }
@@ -1316,11 +1445,14 @@
     const seller = state.teams[p.t];
     if (amount > me.cash) return { ok: false, msg: 'Caixa insuficiente.' };
     if (seller.squad.length <= FB.MIN_SQUAD) return { ok: false, msg: `${seller.name} não vende: elenco curto.` };
+    const ap = FB.boardApproves(state, amount, sal);
+    if (!ap.ok) return ap;
     const ask = FB.askPrice(state, p);
     const ratio = amount / ask;
     if (ratio >= 1 || (ratio >= 0.9 && Math.random() < 0.4)) {
       FB.transfer(state, pid, me.id, amount, sal);
-      FB.msg(state, 'Contratação', `${p.n} chegou do ${seller.name} por ${FB.fmtMoney(amount)}.`);
+      FB.boardSpend(state, amount);
+      FB.msg(state, 'Contratação', `${p.n} chegou do ${seller.name} por ${FB.fmtMoney(amount)}.`, { from: 'Mercado' });
       FB.news(state, 'mercado', `Fechado: ${p.n} no ${me.name}`, `O ${me.name} pagou ${FB.fmtMoney(amount)} ao ${seller.name} por ${p.n}.`, { team: me.id });
       return { ok: true };
     }
@@ -1338,7 +1470,7 @@
     p.t = null;
     p.sale = false;
     state.free.push(pid);
-    FB.msg(state, 'Dispensa', `${p.n} foi dispensado. Multa rescisória: ${FB.fmtMoney(fine)}.`);
+    FB.msg(state, 'Dispensa', `${p.n} foi dispensado. Multa rescisória: ${FB.fmtMoney(fine)}.`, { from: 'Mercado' });
     return { ok: true };
   };
 
@@ -1354,6 +1486,7 @@
     if (me.squad.length <= FB.MIN_SQUAD) { m.offer.done = false; return { ok: false, msg: `Mínimo de ${FB.MIN_SQUAD} jogadores no elenco.` }; }
     if (buyer.cash < m.offer.amount) { m.offer.result = 'Cancelada'; return { ok: false, msg: `${buyer.name} não tem mais dinheiro.` }; }
     FB.transfer(state, p.id, buyer.id, m.offer.amount, FB.wageDemand(state, p, buyer.id));
+    FB.boardSale(state, m.offer.amount);
     m.offer.result = 'Aceita';
     FB.news(state, 'mercado', `${p.n} deixa o ${me.name}`, `${p.n} foi vendido ao ${buyer.name} por ${FB.fmtMoney(m.offer.amount)}.`, { team: buyer.id });
     return { ok: true };
@@ -1404,7 +1537,7 @@
         if (!cands.length) return;
         const b = pick(cands);
         FB.msg(state, `Proposta por ${p.n}`, `O ${b.name} oferece ${FB.fmtMoney(amount)} por ${p.n} (${FB.POS_NAME[p.pos]}, ${p.ovr}).`,
-          { offer: { pid: p.id, from: b.id, amount, done: false } });
+          { from: 'Mercado', offer: { pid: p.id, from: b.id, amount, done: false } });
       };
       const pending = new Set(state.inbox.filter(m => m.offer && !m.offer.done).map(m => m.offer.pid));
       for (const pid of me.squad) {
@@ -1441,7 +1574,7 @@
     if (t.cash < cost) return { ok: false, msg: 'Caixa insuficiente para a obra.' };
     FB.money(state, t.id, -cost, 'obras');
     t.cap += 5000;
-    FB.msg(state, 'Estádio ampliado', `O estádio agora comporta ${t.cap.toLocaleString('pt-BR')} torcedores.`);
+    FB.msg(state, 'Estádio ampliado', `O estádio agora comporta ${t.cap.toLocaleString('pt-BR')} torcedores.`, { from: 'Diretoria' });
     return { ok: true };
   };
 
@@ -1511,6 +1644,7 @@
     if (st && !state.fired) {
       const met = st.pos <= state.board.target;
       summary.met = met;
+      summary.goals = FB.boardSeasonEnd(state, met);
       state.board.conf = clamp(state.board.conf + (met ? 25 : -(st.pos - state.board.target) * 5), 0, 100);
       if (state.board.conf <= 0) { summary.fired = true; FB.fire(state); }
       else if (met && Math.random() < 0.7) summary.offers = FB.jobOffers(state, true).slice(0, 2);
@@ -1531,7 +1665,8 @@
     }
     if (!state.fired) FB.setObjective(state);
     state.lastSummary = summary;
-    FB.msg(state, `Temporada ${state.season}`, state.fired ? 'Procure um novo clube para continuar.' : `Objetivo da diretoria: ${state.board.text}.`);
+    if (state.fired) FB.msg(state, `Temporada ${state.season}`, 'Procure um novo clube para continuar.', { from: 'Diretoria' });
+    else FB.boardSetup(state);
     FB.news(state, 'atualizacao', `Começa a temporada ${state.season}`, 'Os estaduais abrem o calendário. A janela de transferências fica aberta até o início de abril.');
     FB.save(state);
     return summary;
@@ -1601,6 +1736,14 @@
     return p;
   };
 
+  // Completa saves antigos com os campos novos.
+  FB.migrate = state => {
+    if (!state) return state;
+    for (const m of state.inbox || []) if (!m.from) m.from = m.offer ? 'Mercado' : m.injury ? 'Departamento médico' : 'Clube';
+    if (state.userId != null && !state.board.goals && !state.fired) FB.boardSetup(state, true);
+    return state;
+  };
+
   // ---------- Persistência ----------
 
   FB.save = state => {
@@ -1609,7 +1752,7 @@
   FB.load = () => {
     try {
       const raw = localStorage.getItem(FB.SAVE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      return raw ? FB.migrate(JSON.parse(raw)) : null;
     } catch (e) { return null; }
   };
   FB.wipe = () => { try { localStorage.removeItem(FB.SAVE_KEY); } catch (e) { /* ignora */ } };

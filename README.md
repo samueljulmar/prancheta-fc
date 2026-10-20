@@ -31,6 +31,33 @@ Temporada de janeiro a dezembro, com datas reais (sábados para o Brasileirão e
 Os cartões e suspensões são contados por competição. As janelas de transferência abrem do início do ano até o
 começo do Brasileirão e em julho; jogadores livres podem ser contratados a qualquer momento.
 
+## Antes de cada jogo
+
+Ao tocar em **Jogar**, abre a tela de pré-jogo:
+- **Adversário**: força, esquema habitual, fase, destaques, desfalques e o relatório do auxiliar técnico, com
+  dicas baseadas no confronto (por exemplo, "eles jogam sem laterais: ataque pelos lados").
+- **Escalação**: titulares no campo, botões *Melhor time* e *Rodar cansados*, capitão e os **12 relacionados**
+  do banco. Só quem está no banco pode entrar durante a partida.
+- **Tática**: formação, postura, pressão, ritmo, linha defensiva, foco do ataque e estilo de passe. Cada escolha
+  tem efeito na simulação e interage com o estilo do adversário (contra-ataque contra linha adiantada,
+  jogadas pelos lados contra times sem laterais etc.).
+- **Preleção**: motivar, cobrar a vitória, tirar a pressão ou foco no adversário. O efeito depende de quem é o
+  favorito e do moral do elenco.
+
+## Rodízio do elenco
+
+Em *Elenco → Tática* dá para ligar o **rodízio automático** (o auxiliar poupa quem estiver abaixo da energia
+mínima escolhida) e definir a **prioridade de cada competição**: principal, normal ou *poupar titulares*.
+
+## Diretoria e e-mails
+
+- No começo de cada temporada a diretoria envia as **metas**: posição na liga, metas no estadual, na Copa do
+  Brasil e nas competições continentais, teto da folha salarial, caixa positivo e minutos para a base.
+- Há um **orçamento para contratações** e um **teto salarial**: compras acima disso não são aprovadas. Vendas
+  liberam metade do valor para novas contratações, e dá para pedir mais verba uma vez por temporada.
+- **E-mails** da diretoria (relatório mensal, metas cumpridas ou não, ultimato), do departamento médico, do
+  auxiliar técnico, do mercado e da torcida.
+
 ## Lesões e departamento médico
 
 - Cerca de 20 tipos de lesão com frequência e tempo de recuperação baseados no futebol profissional: contusão
@@ -83,7 +110,8 @@ Nomes, escudos e marcas de clubes e jogadores reais pertencem aos donos. Use bas
 | --- | --- |
 | `data.js` | Utilitários, nomes, formações, estaduais e cidades do interior |
 | `pack-brasil.js` | Clubes reais do Brasil 2026 e sul-americanos |
-| `engine.js` | Competições, calendário, partida, finanças, mercado, diretoria, temporada e save |
+| `engine.js` | Competições, calendário, partida, tática, finanças, mercado, temporada e save |
+| `board.js` | Metas da diretoria, orçamento, teto salarial e e-mails |
 | `medical.js` | Lesões, tratamentos e recuperação |
 | `news.js` | Feed de notícias |
 | `importer.js` | Importação e exportação de base (CSV/JSON, transfermarkt-datasets) |

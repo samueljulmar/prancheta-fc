@@ -89,7 +89,7 @@
       p.inj.chosen = false;
       FB.msg(state, `Departamento médico: ${p.n}`,
         `Diagnóstico: ${inj.name}. Previsão inicial de ${FB.fmtDays(p.inj.until - today)} fora. Escolha o tratamento.`,
-        { injury: { pid: p.id } });
+        { from: 'Departamento médico', injury: { pid: p.id } });
     }
     if (opts.news !== false) FB.injuryNews(state, p);
   };

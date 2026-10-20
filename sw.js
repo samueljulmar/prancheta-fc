@@ -1,6 +1,6 @@
 // Prancheta FC — cache offline. Mude a versão ao publicar arquivos novos.
-const CACHE = 'prancheta-v2';
-const FILES = ['./', 'index.html', 'app.css', 'data.js', 'pack-brasil.js', 'medical.js', 'news.js', 'engine.js', 'importer.js', 'ui.js',
+const CACHE = 'prancheta-v3';
+const FILES = ['./', 'index.html', 'app.css', 'data.js', 'pack-brasil.js', 'medical.js', 'news.js', 'engine.js', 'board.js', 'importer.js', 'ui.js',
   'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

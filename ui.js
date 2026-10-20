@@ -38,6 +38,15 @@
     if (p.sale) s += `<span class="tag gold">À venda</span>`;
     return s ? `<span class="tags">${s}</span>` : '';
   };
+  const rerender = () => { if (ui.pre) renderPrematch(); else render(); };
+  const SENDER_ICON = { Diretoria: '🏛️', 'Departamento médico': '🩺', 'Auxiliar técnico': '📋', Mercado: '💼', Torcida: '📣', Clube: '✉️' };
+  const tacSeg = (team, k, label, opts, act = 'tac') => `
+    <div class="tac-row"><span class="muted small">${label}</span>
+      <div class="seg" style="margin:0">${Object.entries(opts).map(([v, l]) => `<button class="${FB.tac(team, k) === v ? 'on' : ''}" data-act="${act}" data-k="${k}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+  const tacticsHtml = (team, act = 'tac') =>
+    tacSeg(team, 'posture', 'Postura', FB.POSTURES, act) +
+    tacSeg(team, 'press', 'Pressão', { baixa: 'Baixa', media: 'Média', alta: 'Alta' }, act) +
+    Object.entries(FB.TACTICS).map(([k, d]) => tacSeg(team, k, d.label, d.opts, act)).join('');
   const formHtml = list => `<span class="form">${list.map(f => `<i class="${f}">${f}</i>`).join('')}</span>`;
 
   function toast(text, ms = 2600) {
@@ -336,21 +345,41 @@
     return html + inboxHtml() + newsPreview();
   }
 
+  function mailItem(m) {
+    let extra = '';
+    if (m.offer) {
+      extra = m.offer.done ? `<span class="tag ${m.offer.result === 'Aceita' ? 'green' : ''}">${esc(m.offer.result || '')}</span>`
+        : `<div class="btns"><button class="btn sm danger" data-act="offer-no" data-id="${m.id}">Recusar</button>
+           <button class="btn sm primary" data-act="offer-yes" data-id="${m.id}">Aceitar</button></div>`;
+    }
+    if (m.injury) {
+      const p = P(m.injury.pid);
+      if (p && p.inj && !p.inj.chosen && p.t === S.userId) extra = `<div class="btns"><button class="btn sm primary" data-act="treat-open" data-id="${p.id}">Escolher tratamento</button></div>`;
+    }
+    return `<div class="msg ${m.read ? '' : 'unread'}"><div class="row" style="gap:6px;margin-bottom:2px"><span class="tag">${SENDER_ICON[m.from] || '✉️'} ${esc(m.from || 'Clube')}</span>
+      <span class="muted small grow" style="text-align:right">${m.season === S.season ? esc(date(m.day, false)) : m.season}</span></div>
+      <b>${esc(m.title)}</b><p class="pre">${esc(m.text)}</p>${extra}</div>`;
+  }
+
+  function openInbox(from) {
+    ui.mailFrom = from || '';
+    openSheet(() => {
+      const senders = [...new Set(S.inbox.map(m => m.from || 'Clube'))];
+      const list = S.inbox.filter(m => !ui.mailFrom || m.from === ui.mailFrom);
+      return `<h2>E-mails</h2>
+        <div class="seg">${[['', 'Todos'], ...senders.map(x => [x, x])].map(([k, l]) => `<button class="${ui.mailFrom === k ? 'on' : ''}" data-act="mail-from" data-v="${esc(k)}">${esc(l)}</button>`).join('')}</div>
+        <div class="list">${list.map(mailItem).join('') || '<div class="empty">Nenhum e-mail.</div>'}</div>
+        <button class="btn block" data-act="close">Fechar</button>`;
+    });
+    S.inbox.forEach(m => { m.read = true; });
+    FB.save(S);
+  }
+
   function inboxHtml() {
     if (!S.inbox.length) return '';
-    return `<div class="card" style="padding:0"><h3 style="padding:14px 14px 0">Mensagens</h3>${S.inbox.slice(0, 12).map(m => {
-      let extra = '';
-      if (m.offer) {
-        extra = m.offer.done ? `<span class="tag ${m.offer.result === 'Aceita' ? 'green' : ''}">${esc(m.offer.result || '')}</span>`
-          : `<div class="btns"><button class="btn sm danger" data-act="offer-no" data-id="${m.id}">Recusar</button>
-             <button class="btn sm primary" data-act="offer-yes" data-id="${m.id}">Aceitar</button></div>`;
-      }
-      if (m.injury) {
-        const p = P(m.injury.pid);
-        if (p && p.inj && !p.inj.chosen && p.t === S.userId) extra = `<div class="btns"><button class="btn sm primary" data-act="treat-open" data-id="${p.id}">Escolher tratamento</button></div>`;
-      }
-      return `<div class="msg"><b>${esc(m.title)}</b><p>${esc(m.text)}</p>${extra}</div>`;
-    }).join('')}</div>`;
+    const unread = S.inbox.filter(m => !m.read).length;
+    return `<div class="card" style="padding:0"><div class="row between" style="padding:14px 14px 0"><h3 style="margin:0">E-mails ${unread ? `<span class="tag red">${unread} novo(s)</span>` : ''}</h3>
+      <button class="btn sm" data-act="inbox">Caixa de entrada</button></div>${S.inbox.slice(0, 5).map(mailItem).join('')}</div>`;
   }
 
   function newsPreview() {
@@ -363,11 +392,12 @@
   // ---------- Elenco ----------
 
   function viewElenco() {
-    const tabs = [['escalacao', 'Escalação'], ['jogadores', 'Jogadores'], ['medico', 'Médico'], ['treino', 'Treino']];
+    const tabs = [['escalacao', 'Escalação'], ['tatica', 'Tática'], ['jogadores', 'Jogadores'], ['medico', 'Médico'], ['treino', 'Treino']];
     const seg = `<div class="seg fill">${tabs.map(([k, l]) => `<button class="${ui.elenco === k ? 'on' : ''}" data-act="elenco" data-v="${k}">${l}</button>`).join('')}</div>`;
     if (ui.elenco === 'jogadores') return seg + playersHtml();
     if (ui.elenco === 'treino') return seg + trainingHtml();
     if (ui.elenco === 'medico') return seg + medicalHtml();
+    if (ui.elenco === 'tatica') return seg + tacticTabHtml();
     return seg + lineupHtml();
   }
 
@@ -400,20 +430,58 @@
     return `
       <div class="card" style="padding:12px">
         <div class="seg">${Object.keys(FB.FORMATIONS).map(fm => `<button class="${t.formation === fm ? 'on' : ''}" data-act="formation" data-v="${fm}">${fm}</button>`).join('')}</div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">
-          <span class="muted small" style="width:58px">Postura</span>
-          <div class="seg" style="margin:0">${Object.entries(FB.POSTURES).map(([k, l]) => `<button class="${t.posture === k ? 'on' : ''}" data-act="posture" data-v="${k}">${l}</button>`).join('')}</div>
-        </div>
-        <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">
-          <span class="muted small" style="width:58px">Pressão</span>
-          <div class="seg" style="margin:0">${[['baixa', 'Baixa'], ['media', 'Média'], ['alta', 'Alta']].map(([k, l]) => `<button class="${(t.press || 'media') === k ? 'on' : ''}" data-act="press" data-v="${k}">${l}</button>`).join('')}</div>
-        </div>
+        <p class="muted small" style="margin:0">Postura, pressão, ritmo e demais instruções ficam na aba <b>Tática</b>.</p>
       </div>
       ${issues ? `<div class="card small" style="border-color:var(--orange)">⚠️ ${issues} posição(ões) com jogador lesionado, suspenso${key ? ' na ' + esc(S.comps[key].short) : ''} ou vazia. Toque para trocar ou use <b>Escalar automaticamente</b>.</div>` : ''}
       ${pitchHtml(t, t.lineup, t.formation)}
-      <div class="btns" style="margin-bottom:12px"><button class="btn" data-act="auto-lineup">⚡ Escalar automaticamente</button></div>
-      <div class="row between" style="margin:4px 2px 8px"><b>Reservas</b><span class="muted small">Força titular: ${FB.lineupStrength(S, t).toFixed(1)}</span></div>
-      <div class="list">${bench.map(p => playerRow(p)).join('')}</div>`;
+      <div class="btns" style="margin-bottom:12px"><button class="btn" data-act="auto-lineup">⚡ Escalar automaticamente</button>
+        <button class="btn" data-act="auto-lineup" data-v="rot">🔄 Rodar cansados</button></div>
+      ${benchHtml(t, key)}`;
+  }
+
+  // Banco de reservas (relacionados) e lista de quem fica de fora.
+  function benchHtml(t, key) {
+    if (!t.bench || !t.bench.length) t.bench = FB.autoBench(S, t, t.lineup, key);
+    t.bench = t.bench.filter(id => t.squad.includes(id) && !t.lineup.includes(id));
+    const others = t.squad.filter(id => !t.lineup.includes(id)).map(P)
+      .sort((a, b) => (t.bench.includes(b.id) - t.bench.includes(a.id)) || FB.POS.indexOf(a.pos) - FB.POS.indexOf(b.pos) || b.ovr - a.ovr);
+    const row = p => {
+      const on = t.bench.includes(p.id);
+      const out = !FB.available(p, key) || (p.inj && !p.inj.play);
+      return `<div class="item ${on ? 'me' : ''}">${posTag(p.pos)}
+        <button class="grow plain" data-act="player" data-id="${p.id}"><div class="name ellipsis">${esc(p.n)}${statusTags(p)}</div>
+          <div class="meta">${p.age} anos · ${moIcon(p.mo)} · energia ${Math.round(p.en)}%</div></button>
+        <div class="ovr">${p.ovr}</div>
+        <button class="btn sm ${on ? 'primary' : ''}" data-act="bench-toggle" data-id="${p.id}" ${out && !on ? 'disabled' : ''}>${on ? 'No banco' : 'Relacionar'}</button></div>`;
+    };
+    return `<div class="row between" style="margin:4px 2px 8px"><b>Banco de reservas (${t.bench.length}/${FB.MAX_BENCH})</b>
+        <button class="btn sm" data-act="auto-bench">Auto</button></div>
+      <p class="muted small" style="margin:-4px 2px 8px">Só quem está no banco pode entrar durante o jogo. Força titular: ${FB.lineupStrength(S, t).toFixed(1)}</p>
+      <div class="list">${others.map(row).join('')}</div>`;
+  }
+
+  // Aba Tática: estilo de jogo, capitão, rodízio e prioridade por competição.
+  function tacticTabHtml() {
+    const t = me();
+    const rot = t.rotation || { auto: false, min: 65 };
+    const comps = compOrder();
+    const capOpts = t.lineup.filter(id => id != null).map(P).sort((a, b) => b.ovr - a.ovr);
+    return `<div class="card"><h3>Estilo de jogo</h3>${tacticsHtml(t)}
+        <p class="muted small" style="margin:8px 0 0">Dica: contra-ataque rende contra quem joga adiantado; pelos lados funciona contra times sem laterais (3-5-2, 3-4-3). Ritmo acelerado e linha alta cansam mais.</p></div>
+      <div class="card"><h3>Capitão</h3>
+        <select class="select" id="captain-select"><option value="">Sem capitão definido</option>
+          ${capOpts.map(p => `<option value="${p.id}" ${t.captain === p.id ? 'selected' : ''}>${esc(p.n)} (${p.pos}, ${p.ovr})</option>`).join('')}</select>
+        <p class="muted small" style="margin:6px 0 0">Um capitão em campo e com boa moral dá um pequeno ganho ao time.</p></div>
+      <div class="card"><h3>Rodízio do elenco</h3>
+        <div class="row between"><span>Rodízio automático</span><button class="btn sm ${rot.auto ? 'primary' : ''}" data-act="rot-toggle">${rot.auto ? 'Ligado' : 'Desligado'}</button></div>
+        <p class="muted small">Ligado, o auxiliar monta o time antes de cada jogo, poupando quem estiver abaixo da energia mínima.</p>
+        <div class="row between"><span class="small">Energia mínima</span>
+          <div class="seg" style="margin:0">${[55, 65, 75].map(v => `<button class="${(rot.min || 65) === v ? 'on' : ''}" data-act="rot-min" data-v="${v}">${v}%</button>`).join('')}</div></div>
+        <h3 style="margin-top:14px">Prioridade por competição</h3>
+        ${comps.map(c => `<div class="tac-row"><span class="muted small">${esc(c.short)}</span>
+          <div class="seg" style="margin:0">${[['principal', 'Principal'], ['normal', 'Normal'], ['poupar', 'Poupar titulares']].map(([k, l]) =>
+            `<button class="${((t.prio || {})[c.key] || 'normal') === k ? 'on' : ''}" data-act="prio" data-k="${c.key}" data-v="${k}">${l}</button>`).join('')}</div></div>`).join('')}
+        <p class="muted small" style="margin:6px 0 0">"Poupar titulares" faz o rodízio automático e o botão 🔄 preferirem os reservas nessa competição.</p></div>`;
   }
 
   function playerRow(p, opts = {}) {
@@ -769,8 +837,16 @@
         <button class="btn block" data-act="expand" ${t.cash < 5000 * FB.SEAT_COST ? 'disabled' : ''}>Ampliar +5.000 lugares (${money(5000 * FB.SEAT_COST)})</button>
       </div>
       <div class="card"><h3>Diretoria</h3>
-        <p style="margin:0 0 6px">Objetivo: <b>${esc(S.board.text)}</b></p>
-        <div class="row"><div class="bar grow"><i style="width:${S.board.conf}%"></i></div><b class="small">${Math.round(S.board.conf)}%</b></div>
+        <div class="row"><span class="small grow">Confiança no treinador</span><b class="small">${Math.round(S.board.conf)}%</b></div>
+        <div class="bar" style="margin:6px 0 12px"><i style="width:${S.board.conf}%"></i></div>
+        <b class="small">Metas da temporada</b>
+        ${(S.board.goals || []).map(g => `<div class="row between small" style="padding:5px 0;gap:8px"><span>${esc(g.text)}</span>
+          <span class="tag ${g.status === 'cumprido' ? 'green' : g.status === 'falhou' ? 'red' : ''}" style="flex:0 0 auto">${FB.GOAL_STATUS[g.status]}</span></div>`).join('')}
+        <div class="stat-grid" style="margin-top:10px">
+          <div class="stat"><small>Orçamento p/ contratações</small><b>${money(FB.budgetLeft(S))}</b></div>
+          <div class="stat"><small>Teto da folha</small><b>${money(S.board.wageCap || 0)}</b><span class="small muted">/mês</span></div>
+        </div>
+        <button class="btn block" style="margin-top:10px" data-act="ask-budget" ${S.board.askedMore ? 'disabled' : ''}>${S.board.askedMore ? 'Pedido de verba já feito nesta temporada' : '💰 Pedir mais verba à diretoria'}</button>
         <p class="muted small">Treinador: ${esc(S.coach)}</p>
       </div>
       <div class="card"><h3>Carreira</h3>${S.history.length ? S.history.map(h => `
@@ -793,16 +869,117 @@
 
   const VIEWS = { inicio: viewInicio, elenco: viewElenco, jogos: viewJogos, mercado: viewMercado, noticias: viewNoticias, clube: viewClube };
 
+  // ---------- Pré-jogo ----------
+
+  const TALKS = {
+    motivar: ['🔥 Motivar o grupo', 'Funciona melhor quando somos zebra ou o time está para baixo.'],
+    cobrar: ['😤 Cobrar a vitória', 'Bom quando somos favoritos; arriscado com o moral baixo.'],
+    tranquilo: ['🧘 Tirar a pressão', 'Ajuda times nervosos ou contra adversários mais fortes.'],
+    respeito: ['🎯 Foco total no adversário', 'Evita o salto alto quando somos muito favoritos.'],
+    nenhuma: ['🤐 Sem preleção', 'Deixar o grupo à vontade.'],
+  };
+
+  function openPrematch() {
+    const f = FB.userFixture(S);
+    if (!f) { startDate(); return; }
+    const t = me();
+    const prio = (t.prio || {})[f.comp.key] || 'normal';
+    if (t.rotation && t.rotation.auto) {
+      t.lineup = FB.bestLineup(S, t, f.comp.key, t.formation, { min: t.rotation.min || 65, rest: prio === 'poupar' });
+      t.bench = FB.autoBench(S, t, t.lineup, f.comp.key);
+    }
+    const notes = FB.fixLineup(S, t, f.comp.key);
+    t.bench = (t.bench || []).filter(id => FB.available(P(id), f.comp.key) && !P(id).inj && !t.lineup.includes(id));
+    if (!t.bench.length) t.bench = FB.autoBench(S, t, t.lineup, f.comp.key);
+    ui.pre = { f, tab: 'adv', talk: null };
+    renderPrematch();
+    if (notes.length) toast(notes.map(c => `${P(c.out).n} fora` + (c.in != null ? ` → ${P(c.in).n}` : '')).join(' · '), 4500);
+  }
+
+  function renderPrematch() {
+    const pre = ui.pre;
+    if (!pre) return;
+    const f = pre.f;
+    const t = me();
+    const opp = T(f.h === t.id ? f.a : f.h);
+    let el = document.getElementById('prematch');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'prematch';
+      el.className = 'live';
+      document.body.appendChild(el);
+    }
+    const scroll = el.querySelector('.pre-body')?.scrollTop || 0;
+    const tabs = [['adv', 'Adversário'], ['escalacao', 'Escalação'], ['tatica', 'Tática'], ['prelecao', 'Preleção']];
+    let body = '';
+    if (pre.tab === 'adv') body = prematchOpp(t, opp, f);
+    else if (pre.tab === 'escalacao') body = prematchLineup(t, f);
+    else if (pre.tab === 'tatica') body = `<div class="card"><h3>Formação</h3><div class="seg">${Object.keys(FB.FORMATIONS).map(fm => `<button class="${t.formation === fm ? 'on' : ''}" data-act="formation" data-v="${fm}">${fm}</button>`).join('')}</div></div>
+      <div class="card"><h3>Estratégia para o jogo</h3>${tacticsHtml(t)}</div>
+      <div class="card"><h3>Auxiliar técnico</h3>${FB.scoutReport(S, t.id, opp.id).map(x => `<p class="small" style="margin:4px 0">• ${esc(x)}</p>`).join('')}</div>`;
+    else body = `<p class="muted small" style="margin:0 2px 10px">O que você diz ao elenco antes de entrar em campo?</p>
+      <div class="list">${Object.entries(TALKS).map(([k, [n, d]]) => `<button class="item ${pre.talk === k ? 'me' : ''}" data-act="pre-talk" data-v="${k}">
+        <div class="grow"><div class="name">${n}</div><div class="meta">${d}</div></div>${pre.talk === k ? '<span class="tag green">Escolhida</span>' : ''}</button>`).join('')}</div>`;
+    const issues = t.lineup.filter(id => id == null || !FB.available(P(id), f.comp.key) || (P(id).inj && !P(id).inj.play)).length;
+    el.innerHTML = `
+      <div class="board" style="padding-bottom:8px">
+        <div class="comp">${esc(date(FB.today(S)))} · ${esc(FB.compLabel(S, f))}</div>
+        <div class="score" style="margin:8px 0 4px">
+          <div class="side">${badge(T(f.h), 40)}<b>${esc(T(f.h).name)}</b></div>
+          <div class="x" style="font-size:18px;color:var(--muted);font-weight:800">×</div>
+          <div class="side">${badge(T(f.a), 40)}<b>${esc(T(f.a).name)}</b></div>
+        </div>
+        <div class="seg fill" style="margin:8px 0 0">${tabs.map(([k, l]) => `<button class="${pre.tab === k ? 'on' : ''}" data-act="pre-tab" data-v="${k}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="pre-body">${issues ? `<div class="card small" style="border-color:var(--orange)">⚠️ ${issues} vaga(s) na escalação com problema. Confira na aba Escalação.</div>` : ''}${body}</div>
+      <div class="controls" style="grid-template-columns:1fr 2fr">
+        <button class="btn" data-act="pre-close">Voltar</button>
+        <button class="btn primary" data-act="pre-start">${pre.talk ? '' : '(sem preleção) '}Iniciar partida ▶</button>
+      </div>`;
+    el.querySelector('.pre-body').scrollTop = scroll;
+  }
+
+  function prematchOpp(t, opp, f) {
+    const st = FB.leagueStanding(S, opp.id);
+    const key = opp.squad.map(P).filter(p => !p.inj).sort((a, b) => b.ovr - a.ovr).slice(0, 4);
+    const out = opp.squad.map(P).filter(p => p.inj && !p.inj.play);
+    return `<div class="card"><h3>${esc(opp.name)}</h3>
+        <div class="stat-grid">
+          <div class="stat"><small>Força</small><b>${FB.teamStrength(S, opp).toFixed(0)}</b> ${stars(FB.teamStrength(S, opp))}</div>
+          <div class="stat"><small>Nós</small><b>${FB.teamStrength(S, t).toFixed(0)}</b> ${stars(FB.teamStrength(S, t))}</div>
+          <div class="stat"><small>Esquema habitual</small><b>${opp.formation}</b></div>
+          <div class="stat"><small>${st ? esc(S.comps[st.key].short) : esc(FB.DIV_NAMES[opp.div])}</small><b>${st && st.row.j ? st.pos + 'º' : '–'}</b> <span class="small muted">${opp.country !== 'BRA' ? FB.COUNTRY[opp.country] : ''}</span></div>
+        </div>
+        ${opp.form && opp.form.length ? `<div class="row between" style="margin-top:10px"><span class="muted small">Últimos jogos</span>${formHtml(opp.form.slice(-5))}</div>` : ''}</div>
+      <div class="card"><h3>Destaques</h3>${key.map(p => `<div class="row" style="padding:4px 0">${posTag(p.pos)}<span class="grow small">${esc(p.n)}</span><b>${p.ovr}</b></div>`).join('')}
+        ${out.length ? `<p class="small pos-red" style="margin:8px 0 0">Desfalques: ${out.map(p => esc(p.n)).join(', ')}</p>` : ''}</div>
+      <div class="card"><h3>Relatório do auxiliar</h3>${FB.scoutReport(S, t.id, opp.id).map(x => `<p class="small" style="margin:4px 0">• ${esc(x)}</p>`).join('')}</div>`;
+  }
+
+  function prematchLineup(t, f) {
+    const tired = t.lineup.filter(id => id != null && P(id).en < 70).map(P);
+    const capOpts = t.lineup.filter(id => id != null).map(P).sort((a, b) => b.ovr - a.ovr);
+    return `<div class="seg">${Object.keys(FB.FORMATIONS).map(fm => `<button class="${t.formation === fm ? 'on' : ''}" data-act="formation" data-v="${fm}">${fm}</button>`).join('')}</div>
+      ${tired.length ? `<div class="card small" style="border-color:var(--orange)">🔋 Cansados: ${tired.map(p => `${esc(p.n)} (${Math.round(p.en)}%)`).join(', ')}</div>` : ''}
+      ${pitchHtml(t, t.lineup, t.formation)}
+      <div class="btns" style="margin-bottom:12px"><button class="btn" data-act="auto-lineup">⚡ Melhor time</button>
+        <button class="btn" data-act="auto-lineup" data-v="rot">🔄 Rodar cansados</button></div>
+      <div class="card"><h3>Capitão</h3><select class="select" id="captain-select"><option value="">Sem capitão definido</option>
+        ${capOpts.map(p => `<option value="${p.id}" ${t.captain === p.id ? 'selected' : ''}>${esc(p.n)} (${p.pos}, ${p.ovr})</option>`).join('')}</select></div>
+      ${benchHtml(t, f.comp.key)}`;
+  }
+
   // ---------- Partida ao vivo ----------
 
   const SPEED_MS = { 1: 650, 2: 300, 4: 110 };
   const EV_ICON = { goal: '⚽', yellow: '🟨', red: '🟥', injury: '🚑', sub: '🔁', chance: '·', ht: '⏸', end: '🏁', pens: '🎯', talk: '🗣️', sys: '⚠️' };
 
-  function startDate() {
+  function startDate(talk) {
     if (S.fired || S.seasonOver) return;
-    const day = FB.startDate(S);
+    const day = FB.startDate(S, { manual: true });
     if (!day.userMatch) { showRoundResults(FB.finishDate(S, day)); return; }
     ui.live = { day, m: day.userMatch, speed: S.settings.speed, paused: false, shown: 0, timer: null };
+    if (talk && talk !== 'nenhuma') day.userMatch.preTalk(day.userMatch.user, talk);
     renderLive();
     if (day.notes.length) toast(day.notes.join(' · '), 4500);
     tickLoop();
@@ -1050,6 +1227,7 @@
         <div class="card"><h3>Campeões ${sm.season}</h3>
           ${sm.champions.map(c => `<div class="row" style="padding:4px 0">${badge(T(c.tid), 24)}<span class="grow ellipsis">${esc(T(c.tid).name)}</span><span class="muted small">${esc(c.comp)}</span></div>`).join('')}
         </div>
+        ${sm.goals && sm.goals.length ? `<div class="card"><h3>Metas da diretoria</h3>${sm.goals.map(g => `<div class="row between small" style="padding:4px 0;gap:8px"><span>${esc(g.text)}</span><span class="tag ${g.status === 'cumprido' ? 'green' : 'red'}">${FB.GOAL_STATUS[g.status]}</span></div>`).join('')}</div>` : ''}
         ${sm.retired.length ? `<div class="card small"><h3>Aposentadorias</h3>${sm.retired.map(esc).join(', ')}</div>` : ''}
         ${sm.youth.length ? `<div class="card small"><h3>Subiram da base</h3>${sm.youth.map(esc).join(', ')}</div>` : ''}
         ${sm.offers.length ? `<div class="card"><h3>Propostas de emprego</h3>${sm.offers.map(id => `
@@ -1092,7 +1270,34 @@
     },
     'export-save': () => download(`prancheta-${S.season}-${me().short}.json`, JSON.stringify(S)),
 
-    play: () => startDate(),
+    play: () => openPrematch(),
+    'pre-tab': d => { ui.pre.tab = d.v; renderPrematch(); document.querySelector('#prematch .pre-body').scrollTop = 0; },
+    'pre-talk': d => { ui.pre.talk = d.v; renderPrematch(); },
+    'pre-close': () => { ui.pre = null; document.getElementById('prematch')?.remove(); FB.save(S); render(); },
+    'pre-start': () => {
+      const talk = ui.pre.talk;
+      ui.pre = null;
+      document.getElementById('prematch')?.remove();
+      FB.save(S);
+      startDate(talk);
+    },
+    tac: d => { me()[d.k] = d.v; FB.save(S); rerender(); },
+    'bench-toggle': d => {
+      const t = me();
+      const id = +d.id;
+      t.bench = t.bench || [];
+      if (t.bench.includes(id)) t.bench = t.bench.filter(x => x !== id);
+      else if (t.bench.length >= FB.MAX_BENCH) { toast(`O banco já tem ${FB.MAX_BENCH} jogadores.`); return; }
+      else t.bench.push(id);
+      FB.save(S); rerender();
+    },
+    'auto-bench': () => { const t = me(); const f = FB.userFixture(S); t.bench = FB.autoBench(S, t, t.lineup, f ? f.comp.key : null); FB.save(S); rerender(); },
+    'rot-toggle': () => { const t = me(); t.rotation = { min: 65, ...(t.rotation || {}) }; t.rotation.auto = !t.rotation.auto; FB.save(S); render(); },
+    'rot-min': d => { const t = me(); t.rotation = { auto: false, ...(t.rotation || {}), min: +d.v }; FB.save(S); render(); },
+    prio: d => { const t = me(); t.prio = t.prio || {}; t.prio[d.k] = d.v; FB.save(S); render(); },
+    inbox: () => openInbox(),
+    'mail-from': d => { ui.mailFrom = d.v; refreshSheet(); },
+    'ask-budget': () => { const r = FB.askBudget(S); FB.save(S); render(); toast(r.msg, 3500); },
     'end-season': () => { const sm = FB.endSeason(S); ui.comp = null; render(); showSeasonSummary(sm); },
     'take-job': d => { FB.takeJob(S, +d.id); closeSheet(); ui.tab = 'inicio'; ui.comp = null; render(); toast(`Bem-vindo ao ${me().name}!`); },
     'offer-yes': d => { const r = FB.answerOffer(S, +d.id, true); FB.save(S); render(); toast(r.ok ? 'Venda concluída!' : r.msg); },
@@ -1110,15 +1315,16 @@
     elenco: d => { ui.elenco = d.v; render(); },
     sort: d => { ui.sort = d.v; render(); },
     player: d => openPlayer(+d.id),
-    formation: d => { FB.reassign(S, me(), d.v); FB.save(S); render(); },
-    posture: d => { me().posture = d.v; FB.save(S); render(); },
-    press: d => { me().press = d.v; FB.save(S); render(); },
+    formation: d => { FB.reassign(S, me(), d.v); FB.save(S); rerender(); },
     training: d => { me().training = d.v; FB.save(S); render(); toast(`Treino: ${FB.TRAININGS[d.v].name}`); },
-    'auto-lineup': () => {
+    'auto-lineup': d => {
       const t = me();
       const f = FB.userFixture(S);
-      t.lineup = FB.bestLineup(S, t, f ? f.comp.key : null);
-      FB.save(S); render(); toast('Time escalado!');
+      const key = f ? f.comp.key : null;
+      const rot = d.v === 'rot';
+      t.lineup = FB.bestLineup(S, t, key, t.formation, rot ? { min: (t.rotation && t.rotation.min) || 70, rest: ((t.prio || {})[key]) === 'poupar' } : {});
+      t.bench = FB.autoBench(S, t, t.lineup, key);
+      FB.save(S); rerender(); toast(rot ? 'Rodízio feito: cansados no banco.' : 'Melhor time escalado!');
     },
     slot: d => {
       const i = +d.i;
@@ -1150,9 +1356,10 @@
       const j = t.lineup.indexOf(pid);
       if (j >= 0) t.lineup[j] = t.lineup[i];
       t.lineup[i] = pid;
+      if (t.bench) t.bench = t.bench.filter(x => x !== pid);
       FB.save(S);
       closeSheet();
-      render();
+      rerender();
     },
     'toggle-sale': d => { const p = P(+d.id); p.sale = !p.sale; FB.save(S); refreshSheet(); render(); toast(p.sale ? 'Jogador listado para venda.' : 'Retirado da lista.'); },
     release: d => {
@@ -1247,6 +1454,7 @@
 
   document.addEventListener('change', e => {
     if (e.target.id === 'comp-select' && e.target.value) A.comp({ v: e.target.value });
+    if (e.target.id === 'captain-select') { me().captain = e.target.value ? +e.target.value : null; FB.save(S); toast('Capitão definido.'); }
   });
 
   document.addEventListener('input', e => {
