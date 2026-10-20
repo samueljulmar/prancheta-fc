@@ -31,6 +31,18 @@ Temporada de janeiro a dezembro, com datas reais (sábados para o Brasileirão e
 Os cartões e suspensões são contados por competição. As janelas de transferência abrem do início do ano até o
 começo do Brasileirão e em julho; jogadores livres podem ser contratados a qualquer momento.
 
+## Carreiras e painel
+
+- Até **3 carreiras salvas** ao mesmo tempo. A tela inicial mostra cada uma num cartão (clube, divisão, temporada,
+  rodada e posição) com os botões *Continuar* e *Apagar*. Os saves ficam no IndexedDB do navegador; a carreira da
+  versão anterior é migrada sozinha.
+- Ao assumir um clube, a **apresentação** mostra o seu contrato (salário e duração) e as metas da diretoria. O contrato
+  é renovado na virada do ano, com aumento quando a diretoria está satisfeita.
+- O **painel** traz o próximo jogo (casa/fora, força dos dois times e dificuldade), o craque da última partida, uma dica
+  do auxiliar técnico e a confiança da diretoria.
+- Navegação: *Painel, Elenco, Mensagens, Mercado* e *Mais* (calendário, notícias, tática, treino, médico, finanças,
+  estádio, diretoria, competições, sala de troféus, carreira e configurações).
+
 ## Antes de cada jogo
 
 Ao tocar em **Jogar**, abre a tela de pré-jogo:
@@ -111,7 +123,7 @@ Nomes, escudos e marcas de clubes e jogadores reais pertencem aos donos. Use bas
 | `data.js` | Utilitários, nomes, formações, estaduais e cidades do interior |
 | `pack-brasil.js` | Clubes reais do Brasil 2026 e sul-americanos |
 | `engine.js` | Competições, calendário, partida, tática, finanças, mercado, temporada e save |
-| `board.js` | Metas da diretoria, orçamento, teto salarial e e-mails |
+| `board.js` | Metas da diretoria, orçamento, teto salarial, e-mails e contrato do treinador |
 | `medical.js` | Lesões, tratamentos e recuperação |
 | `news.js` | Feed de notícias |
 | `importer.js` | Importação e exportação de base (CSV/JSON, transfermarkt-datasets) |

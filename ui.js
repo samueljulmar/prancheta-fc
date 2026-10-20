@@ -3,12 +3,12 @@
 (function (FB) {
   const app = document.getElementById('app');
   const validSave = s => s && s.v === 2 && s.userId != null && Array.isArray(s.dates);
-  let S = FB.load();
-  if (!validSave(S)) S = null;
+  let S = null;
 
   const ui = {
     tab: 'inicio', elenco: 'escalacao', sort: 'pos', comp: null, compPh: null, compRound: null, compView: 'tabela',
     mkt: { mode: 'transf', pos: '', afford: false, q: '' }, newsCat: '', newsMine: false, setup: null, live: null,
+    welcome: false, tipOff: null, mailFrom: '',
   };
 
   // ---------- Utilitários ----------
@@ -104,49 +104,104 @@
   const ICON = {
     inicio: svg('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'),
     elenco: svg('<path d="M8 3 3 6l2 5 2-1v11h10V10l2 1 2-5-5-3a4 4 0 0 1-8 0z"/>'),
-    jogos: svg('<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>'),
+    mensagens: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'),
     mercado: svg('<path d="M7 7h13l-3 3M17 17H4l3-3"/>'),
-    noticias: svg('<path d="M4 5h13v14H6a2 2 0 0 1-2-2zM17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5"/>'),
-    clube: svg('<path d="M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6"/>'),
+    mais: svg('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>'),
     play: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>',
     pause: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>',
   };
-  const TABS = [['inicio', 'Início'], ['elenco', 'Elenco'], ['jogos', 'Jogos'], ['mercado', 'Mercado'], ['noticias', 'Notícias'], ['clube', 'Clube']];
+  const TABS = [['inicio', 'Painel'], ['elenco', 'Elenco'], ['mensagens', 'Mensagens'], ['mercado', 'Mercado'], ['mais', 'Mais']];
 
   // ---------- Render principal ----------
 
   function render() {
     if (!S) { app.innerHTML = ui.setup ? renderSetup() : renderSplash(); return; }
+    if (ui.welcome) { app.innerHTML = renderWelcome(); return; }
     const t = me();
-    const st = FB.leagueStanding(S, t.id);
+    const unread = ui.tab === 'mensagens' ? 0 : S.inbox.filter(m => !m.read).length;
     const pending = S.inbox.some(m => (m.offer && !m.offer.done) || (m.injury && P(m.injury.pid)?.inj && !P(m.injury.pid).inj.chosen));
+    const sec = SECTIONS[ui.tab];
+    const navOn = k => (k === 'mais' ? !!sec : ui.tab === k);
+    const f = !S.fired && !S.seasonOver ? FB.userFixture(S) : null;
     app.innerHTML = `
       <header class="top">
         ${badge(t, 36)}
-        <div class="club"><b>${esc(t.name)}</b><small>${FB.DIV_NAMES[t.div]}${st && st.row.j ? ` · ${st.pos}º` : ''} · ${date(FB.today(S))}/${S.season}</small></div>
-        <div class="cash ${t.cash < 0 ? 'neg' : ''}">${money(t.cash)}</div>
+        <div class="club"><b>${esc(S.coach)}</b><small>${esc(t.name)} · ${date(FB.today(S))}/${S.season}</small></div>
+        ${S.fired || S.seasonOver ? `<div class="cash ${t.cash < 0 ? 'neg' : ''}">${money(t.cash)}</div>`
+          : `<button class="btn sm primary" data-act="play">${f ? 'Jogar' : 'Avançar'} ▶</button>`}
       </header>
-      <main>${VIEWS[ui.tab]()}</main>
+      <main>${sec ? `<div class="view-title"><button class="btn sm" data-act="more">←</button><b>${sec[0]}</b></div>${sec[1]()}` : VIEWS[ui.tab]()}</main>
       <nav class="nav">${TABS.map(([k, label]) => `
-        <button class="${ui.tab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${ICON[k]}${label}
-        ${k === 'inicio' && pending ? '<span class="dot"></span>' : ''}</button>`).join('')}
+        <button class="${navOn(k) ? 'on' : ''}" data-act="${k === 'mais' ? 'more' : 'tab'}" data-v="${k}">${ICON[k]}${label}
+        ${k === 'mensagens' && unread ? `<span class="count">${unread > 9 ? '9+' : unread}</span>` : k === 'mensagens' && pending ? '<span class="dot"></span>' : ''}</button>`).join('')}
       </nav>`;
+    markRead();
   }
 
   // ---------- Início / novo jogo ----------
 
+  function slotCard(n, m) {
+    const t = { c1: m.c1, c2: m.c2, short: m.short };
+    const started = m.started ? new Date(m.started).toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+    return `<div class="card career">
+      <div class="row">${badge(t, 46)}<div class="grow"><b class="ellipsis" style="display:block;font-size:17px">${esc(m.club)}</b>
+        <div class="muted small ellipsis">${FB.DIV_NAMES[m.div]} · ${esc(m.coach)}</div></div></div>
+      <div class="chips">
+        <span class="chip">📅 Temporada ${m.season}</span>
+        ${m.rounds ? `<span class="chip">⚽ Rodada ${m.round}/${m.rounds}</span>` : ''}
+        ${m.fired ? '<span class="chip red">Sem clube</span>' : m.pos ? `<span class="chip ${m.pos <= 3 ? 'gold' : ''}">🏆 ${m.pos}º lugar</span>` : ''}
+      </div>
+      ${started ? `<p class="muted small" style="margin:0 0 10px">Iniciada em ${esc(started)}</p>` : ''}
+      <div class="row"><button class="btn primary grow" data-act="slot-play" data-v="${n}">▶ Continuar</button>
+        <button class="btn danger icon" data-act="slot-del" data-v="${n}" aria-label="Apagar carreira">🗑</button></div>
+    </div>`;
+  }
+
   function renderSplash() {
-    const saved = FB.load();
+    const slots = FB.slots();
+    const used = Object.keys(slots).map(Number).sort((a, b) => a - b);
+    const free = FB.freeSlot() != null;
     return `
       <div class="splash">
         <div class="logo">Prancheta<span> FC</span></div>
         <div class="tagline">Assuma um clube brasileiro: estaduais, Brasileirão das Séries A a D, Copa do Brasil, Libertadores e Sul-Americana.</div>
-        ${validSave(saved) ? `<button class="btn primary big block" data-act="continue">Continuar carreira</button>` : ''}
-        <button class="btn ${validSave(saved) ? '' : 'primary'} big block" data-act="new-game" data-v="real">Novo jogo — clubes reais</button>
-        <button class="btn block" data-act="new-game" data-v="ficticio">Novo jogo — clubes fictícios</button>
-        <button class="btn block" data-act="import-open" data-v="save">Carregar save</button>
+        ${used.length ? `<div class="row between" style="margin:8px 2px 10px"><b style="font-size:18px">Suas carreiras</b>
+          <span class="muted small">${used.length} de ${FB.MAX_SLOTS}</span></div>
+          ${used.map(n => slotCard(n, slots[n])).join('')}` : ''}
+        ${free ? `
+          <button class="btn ${used.length ? '' : 'primary'} big block" data-act="new-game" data-v="real">Nova carreira — clubes reais</button>
+          <button class="btn block" data-act="new-game" data-v="ficticio">Nova carreira — clubes fictícios</button>
+          <button class="btn block" data-act="import-open" data-v="save">Carregar save (.json)</button>`
+        : `<p class="muted small center">Limite de ${FB.MAX_SLOTS} carreiras atingido. Apague uma para começar outra.</p>`}
         <p class="muted small center" style="margin-top:24px">Os clubes reais vêm com elencos gerados. Para usar os jogadores reais, importe uma base na tela de escolha do clube.</p>
       </div>`;
+  }
+
+  // Apresentação ao assumir um clube: contrato e metas da diretoria.
+  const GOAL_ICON = { liga: '🎯', copa: '🏆', folha: '💰', caixa: '🏦', base: '🌱' };
+
+  function renderWelcome() {
+    const t = me();
+    const c = S.contract;
+    const years = c ? c.until - c.from + 1 : 1;
+    return `
+      <div class="welcome">
+        <div class="w-head">${badge(t, 72)}
+          <div class="w-brand">PRANCHETA FC</div>
+          <h1>${esc(t.name)}</h1>
+          <p class="muted" style="margin:0">Bem-vindo, <b style="color:var(--text)">${esc(S.coach)}</b></p></div>
+        ${c ? `<div class="card"><h3>📋 Seu contrato</h3>
+          <div class="row between" style="padding:4px 0"><span class="muted">Salário mensal</span><b class="pos-green" style="font-size:20px">${money(c.sal)}</b></div>
+          <div class="row between" style="padding:4px 0"><span class="muted">Duração</span><b>${years} temporada${years > 1 ? 's' : ''}</b></div>
+          <div class="row between" style="padding:4px 0"><span class="muted">Contrato até</span><b>Temporada ${c.until}</b></div></div>` : ''}
+        <div class="card"><h3>Metas da diretoria</h3>
+          ${(S.board.goals || []).map(g => `<div class="goal"><span class="goal-ico">${GOAL_ICON[g.k] || '•'}</span><span>${esc(g.text)}</span></div>`).join('')}</div>
+        <div class="card"><h3>Recursos</h3>
+          <div class="row between small" style="padding:3px 0"><span class="muted">Caixa do clube</span><b>${money(t.cash)}</b></div>
+          <div class="row between small" style="padding:3px 0"><span class="muted">Orçamento para contratações</span><b>${money(FB.budgetLeft(S))}</b></div>
+          <div class="row between small" style="padding:3px 0"><span class="muted">Teto da folha salarial</span><b>${money(S.board.wageCap || 0)}/mês</b></div></div>
+      </div>
+      <div class="bottom-cta"><button class="btn primary big block" data-act="welcome-done">Começar o trabalho</button></div>`;
   }
 
   function renderSetup() {
@@ -216,7 +271,9 @@
             closeSheet();
             if (!validSave(j)) { toast('Save de uma versão antiga ou inválido.', 3500); return; }
             confirmSheet('Carregar save', `Carregar a carreira de ${j.coach || 'treinador'} (${j.season})? O jogo atual será substituído.`, 'Carregar', () => {
-              S = j; FB.save(S); ui.setup = null; ui.tab = 'inicio'; render(); toast('Save carregado!');
+              const n = FB.freeSlot();
+              if (n == null) { toast(`Limite de ${FB.MAX_SLOTS} carreiras atingido.`); return; }
+              enterSlot(n, j); FB.save(S); toast('Save carregado!');
             });
             return;
           }
@@ -275,8 +332,8 @@
           <button class="item" data-act="take-job" data-id="${id}">${badge(T(id))}
             <div class="grow"><div class="name">${esc(T(id).name)}</div><div class="meta">${FB.DIV_NAMES[T(id).div]}</div></div>
             <span class="btn sm primary">Aceitar</span></button>`).join('')}</div>
-        <button class="btn danger block" data-act="new-game-confirm">Encerrar carreira</button></div>`;
-      return html + inboxHtml();
+        <button class="btn danger block" data-act="slot-del" data-v="${FB.slot}">Encerrar carreira</button></div>`;
+      return html + mailPreview();
     }
 
     if (S.seasonOver) {
@@ -284,55 +341,25 @@
       html += `<div class="card next"><div class="comp">Temporada ${S.season} encerrada</div>
         ${st ? `<p style="margin:0 0 14px">Você terminou em <b>${st.pos}º</b> na ${FB.DIV_NAMES[t.div]}.</p>` : ''}
         <button class="btn primary big block" data-act="end-season">Ver balanço e iniciar ${S.season + 1}</button></div>`;
-      return html + inboxHtml();
+      return html + mailPreview();
     }
 
-    const f = FB.userFixture(S);
-    const today = FB.today(S);
-    if (f) {
-      const opp = T(f.h === t.id ? f.a : f.h);
-      const home = f.h === t.id;
-      const aggTxt = f.comp.decisive && f.comp.leg === 1 ? `<p class="small muted" style="margin:-6px 0 10px">Ida: ${T(f.a).short} ${f.comp.aggA} x ${f.comp.aggH} ${T(f.h).short}</p>` : '';
-      html += `<div class="card next">
-        <div class="comp">${esc(date(today))} · ${esc(FB.compLabel(S, f))}</div>
-        <div class="comp" style="margin-top:-6px">${f.comp.neutral ? 'Campo neutro' : home ? 'Em casa' : 'Fora de casa'}</div>
-        <div class="vs">
-          <div class="side">${badge(T(f.h), 54)}<b>${esc(T(f.h).name)}</b></div>
-          <div class="x">×</div>
-          <div class="side">${badge(T(f.a), 54)}<b>${esc(T(f.a).name)}</b></div>
-        </div>
-        ${aggTxt}
-        <p class="muted small" style="margin:-4px 0 12px">Adversário: ${FB.DIV_NAMES[opp.div]}${opp.country !== 'BRA' ? ' · ' + FB.COUNTRY[opp.country] : ''} · ${stars(FB.teamStrength(S, opp))}</p>
-        <div class="btns"><button class="btn" data-act="tab" data-v="elenco">Escalação</button>
-        <button class="btn primary big" style="flex:2" data-act="play">▶ Jogar</button></div>
-      </div>`;
-    } else {
-      const comps = [...new Set(S.dates[S.di].slots.map(s => S.comps[s.key].kind === 'estadual' ? 'Estaduais' : S.comps[s.key].short))].join(', ');
-      html += `<div class="card next"><div class="comp">${esc(date(today))} · ${esc(comps)}</div>
-        <p class="muted" style="margin:0 0 14px">Seu time não joga nesta data.</p>
-        <button class="btn primary big block" data-act="play">Avançar ▶</button></div>`;
-    }
+    html += nextMatchCard() + lastMatchCard() + tipCard() + boardCard();
 
     const st = FB.leagueStanding(S, t.id);
-    const conf = S.board.conf;
     html += `<div class="card"><h3>Situação</h3><div class="stat-grid">
       ${st ? `<div class="stat"><small>${esc(S.comps[st.key].short)}${st.group ? ' · ' + esc(st.group) : ''}</small><b>${st.row.j ? st.pos + 'º' : '–'}</b> <span class="muted small">${st.row.p} pts</span></div>` : ''}
-      <div class="stat"><small>Força do time</small><b>${FB.lineupStrength(S, t).toFixed(0)}</b> <span class="small">${stars(FB.teamStrength(S, t))}</span></div>
-      <div class="stat" style="grid-column:span 2"><small>Diretoria · ${esc(S.board.text)}</small>
-        <div class="row" style="margin-top:6px"><div class="bar grow ${conf < 30 ? 'bad' : conf < 50 ? 'warn' : ''}"><i style="width:${conf}%"></i></div><b class="small">${Math.round(conf)}%</b></div></div>
+      <div class="stat"><small>Caixa</small><b class="${t.cash < 0 ? 'pos-red' : ''}">${money(t.cash)}</b></div>
     </div>
     ${t.form.length ? `<div class="row between" style="margin-top:12px"><span class="muted small">Últimos jogos</span>${formHtml(t.form.slice(-5))}</div>` : ''}
     <div class="row between" style="margin-top:8px"><span class="muted small">Mercado</span><span class="small ${FB.windowOpen(S) ? 'pos-green' : 'muted'}">${FB.windowText(S)}</span></div>
     </div>`;
 
-    const up = FB.upcoming(S, t.id, 6).filter(x => x.di !== S.di || !f).slice(f ? 0 : 0, 5);
-    const list = up.filter(x => !(f && x.di === S.di));
+    const f = FB.userFixture(S);
+    const list = FB.upcoming(S, t.id, 6).filter(x => !(f && x.di === S.di)).slice(0, 4);
     if (list.length) {
-      html += `<div class="card"><h3>Próximos jogos</h3>${list.map(x => `
-        <div class="row small" style="padding:6px 0;align-items:flex-start">
-          <span class="muted" style="width:86px;flex:0 0 auto">${esc(date(x.day))}</span>
-          <div class="grow"><div class="ellipsis">${x.f ? (x.f.h === t.id ? 'vs ' + esc(T(x.f.a).name) + ' (C)' : '@ ' + esc(T(x.f.h).name) + ' (F)') : '—'}</div>
-          <div class="muted ellipsis" style="font-size:11.5px">${esc(x.label)}</div></div></div>`).join('')}</div>`;
+      html += `<div class="card"><div class="row between" style="margin-bottom:6px"><h3 style="margin:0">Próximos jogos</h3>
+        <button class="btn sm" data-act="tab" data-v="calendario">Calendário</button></div>${list.map(upcomingRow).join('')}</div>`;
     }
 
     const injured = t.squad.map(P).filter(p => p.inj);
@@ -342,7 +369,125 @@
           <div class="grow"><div class="name ellipsis small">${esc(p.n)}</div><div class="meta">${esc(FB.INJURIES[p.inj.type].name)}</div></div>
           <span class="small ${p.inj.chosen ? 'muted' : 'pos-gold'}">${p.inj.chosen ? 'volta ' + date(p.inj.until, false) : 'definir tratamento'}</span></button>`).join('')}</div>`;
     }
-    return html + inboxHtml() + newsPreview();
+    return html + mailPreview() + newsPreview();
+  }
+
+  const upcomingRow = x => {
+    const t = me();
+    return `<div class="row small" style="padding:6px 0;align-items:flex-start">
+      <span class="muted" style="width:86px;flex:0 0 auto">${esc(date(x.day))}</span>
+      <div class="grow"><div class="ellipsis">${x.f ? (x.f.h === t.id ? 'vs ' + esc(T(x.f.a).name) + ' (C)' : '@ ' + esc(T(x.f.h).name) + ' (F)') : '—'}</div>
+      <div class="muted ellipsis" style="font-size:11.5px">${esc(x.label)}</div></div></div>`;
+  };
+
+  // Dificuldade do jogo pela diferença de força, com o mando de campo.
+  function difficulty(f) {
+    const t = me();
+    const opp = T(f.h === t.id ? f.a : f.h);
+    const d = FB.teamStrength(S, opp) - FB.lineupStrength(S, t) + (f.comp.neutral ? 0 : f.h === t.id ? -2 : 2);
+    if (d <= -6) return ['Fácil', 'green'];
+    if (d <= -2) return ['Favorável', 'green'];
+    if (d < 2) return ['Equilibrado', 'blue'];
+    if (d < 6) return ['Difícil', 'gold'];
+    return ['Muito difícil', 'red'];
+  }
+
+  function nextMatchCard() {
+    const t = me();
+    const f = FB.userFixture(S);
+    const today = FB.today(S);
+    if (!f) {
+      const comps = [...new Set(S.dates[S.di].slots.map(s => S.comps[s.key].kind === 'estadual' ? 'Estaduais' : S.comps[s.key].short))].join(', ');
+      return `<div class="card next"><div class="comp">${esc(date(today))} · ${esc(comps)}</div>
+        <p class="muted" style="margin:0 0 14px">Seu time não joga nesta data.</p>
+        <button class="btn primary big block" data-act="play">Avançar ▶</button></div>`;
+    }
+    const c = S.comps[f.comp.key];
+    const home = f.h === t.id;
+    const [diff, cls] = difficulty(f);
+    const ovr = id => Math.round(id === t.id ? FB.lineupStrength(S, t) : FB.teamStrength(S, T(id)));
+    const side = id => `<div class="side">${badge(T(id), 54)}<b>${esc(T(id).name)}</b>
+      <span class="ovr-tag">OVR <b>${ovr(id)}</b></span></div>`;
+    const aggTxt = f.comp.decisive && f.comp.leg === 1 ? `<p class="small muted center" style="margin:-4px 0 10px">Ida: ${T(f.a).short} ${f.comp.aggA} x ${f.comp.aggH} ${T(f.h).short}</p>` : '';
+    return `<div class="card next">
+      <div class="row between" style="margin-bottom:4px"><span class="pill">${esc(c.name)}</span>
+        <span class="muted small">${f.comp.neutral ? '🏟️ Neutro' : home ? '🏠 Casa' : '✈️ Fora'}</span></div>
+      <div class="muted small">${esc(date(today))} · ${esc(FB.compLabel(S, f).replace(c.name + ' · ', ''))}</div>
+      <div class="vs">${side(f.h)}
+        <div class="x">VS<span class="diff ${cls}">${diff}</span></div>
+        ${side(f.a)}</div>
+      ${aggTxt}
+      <div class="btns"><button class="btn" data-act="tab" data-v="elenco">Escalação</button>
+      <button class="btn primary big" style="flex:2" data-act="play">▶ Jogar partida</button></div>
+    </div>`;
+  }
+
+  function lastMatchCard() {
+    const L = S.lastMatch;
+    if (!L || !L.best || !P(L.best.pid)) return '';
+    const p = P(L.best.pid);
+    const mine = L.h === S.userId;
+    const word = { V: 'Vitória', E: 'Empate', D: 'Derrota' }[L.res];
+    return `<div class="card"><h3>⭐ Craque da última partida</h3>
+      <button class="item" style="border:0;padding:0;min-height:0" data-act="player" data-id="${p.id}">
+        <span class="star-ico">⭐</span>
+        <div class="grow"><div class="name ellipsis">${esc(p.n)}</div>
+          <div class="meta">Nota ${L.best.rt.toFixed(1).replace('.', ',')}${L.best.goals ? ` · ${L.best.goals} gol${L.best.goals > 1 ? 's' : ''}` : ''}</div></div>
+        <div style="text-align:right"><b class="res-${L.res}">${mine ? L.hg : L.ag}–${mine ? L.ag : L.hg}</b>
+          <div class="small res-${L.res}">${word}</div></div></button>
+      <p class="muted small" style="margin:8px 0 0">${esc(L.label)} · ${mine ? 'vs ' + esc(T(L.a).name) : '@ ' + esc(T(L.h).name)}</p></div>`;
+  }
+
+  // Dica do auxiliar técnico: primeiro os problemas urgentes, depois observações que se alternam a cada data.
+  function assistantTip() {
+    const t = me();
+    const squad = t.squad.map(P);
+    const untreated = squad.find(p => p.inj && !p.inj.chosen);
+    if (untreated) return { icon: '🩺', title: 'Lesão sem tratamento', text: `${untreated.n} está lesionado e aguarda a sua decisão.`, hint: 'Abra a ficha dele e escolha o tratamento.', act: `data-act="player" data-id="${untreated.id}"` };
+    if (t.cash < 0) return { icon: '🏦', title: 'Caixa negativo', text: `O clube está com ${money(t.cash)} em caixa.`, hint: 'Venda jogadores ou reduza a folha salarial.' };
+    const tired = t.lineup.filter(id => id != null && P(id).en < 70).map(P);
+    if (tired.length >= 2) return { icon: '🔋', title: 'Titulares cansados', text: `${tired.length} titulares estão abaixo de 70% de energia: ${tired.slice(0, 3).map(p => p.n.split(' ')[0]).join(', ')}.`, hint: 'Use "Rodar cansados" na escalação.', act: 'data-act="tab" data-v="elenco"' };
+    if (S.board.wageCap && FB.payroll(S, t) > S.board.wageCap) return { icon: '💰', title: 'Folha acima do teto', text: `A folha está em ${money(FB.payroll(S, t))}/mês; o teto é ${money(S.board.wageCap)}.`, hint: 'A diretoria perde confiança todo mês até a folha baixar.' };
+
+    const opts = [];
+    const goals = p => Object.values(p.gl || {}).reduce((a, b) => a + b, 0);
+    const top = squad.slice().sort((a, b) => goals(b) - goals(a))[0];
+    if (top && goals(top) >= 3) opts.push({ icon: '🔥', title: 'Jogador em destaque', text: `${top.n} tem ${goals(top)} gols na temporada. OVR ${top.ovr}.`, hint: 'Mantenha-o como titular e monte o time em volta dele.', act: `data-act="player" data-id="${top.id}"` });
+    const sad = squad.filter(p => p.mo < 35);
+    if (sad.length) opts.push({ icon: '😞', title: 'Moral baixo', text: `${sad.length} jogador(es) estão desanimados: ${sad.slice(0, 3).map(p => p.n.split(' ')[0]).join(', ')}.`, hint: 'Dê minutos a eles ou use a preleção para motivar o grupo.' });
+    const young = squad.filter(p => p.age <= 20 && !t.lineup.includes(p.id) && FB.knowsPot(S, p) && p.pot >= p.ovr + 10).sort((a, b) => b.pot - a.pot)[0];
+    if (young) opts.push({ icon: '🌱', title: 'Promessa no elenco', text: `${young.n} (${young.age} anos) tem potencial ${young.pot}.`, hint: 'Jogando, os jovens evoluem mais rápido.', act: `data-act="player" data-id="${young.id}"` });
+    if (FB.windowOpen(S) && FB.budgetLeft(S) > 0) opts.push({ icon: '💼', title: 'Janela aberta', text: `Há ${money(FB.budgetLeft(S))} de orçamento para contratações.`, hint: 'Procure reforços no Mercado.', act: 'data-act="tab" data-v="mercado"' });
+    const weak = FB.POS.map(pos => ({ pos, n: squad.filter(p => p.pos === pos && !p.inj).length })).find(x => x.n < { G: 2, Z: 4, L: 3, M: 5, A: 3 }[x.pos]);
+    if (weak) opts.push({ icon: '📋', title: 'Elenco curto', text: `Só ${weak.n} ${FB.POS_NAME[weak.pos].toLowerCase()}(s) disponível(is).`, hint: 'Considere contratar alguém para essa posição.', act: 'data-act="tab" data-v="mercado"' });
+    return opts.length ? opts[S.di % opts.length] : null;
+  }
+
+  function tipCard() {
+    if (ui.tipOff === S.di) return '';
+    const tip = assistantTip();
+    if (!tip) return '';
+    return `<div class="card tip"><button class="tip-x" data-act="tip-off" aria-label="Fechar">×</button>
+      <div class="tip-head">${tip.icon} Auxiliar técnico</div>
+      <b>${esc(tip.title)}</b><p class="muted small" style="margin:4px 0 6px">${esc(tip.text)}</p>
+      <p class="small pos-gold" style="margin:0">💡 ${esc(tip.hint)}</p>
+      ${tip.act ? `<button class="btn sm" style="margin-top:10px" ${tip.act}>Ver</button>` : ''}</div>`;
+  }
+
+  const MOOD_TAG = c => (c >= 75 ? ['Confiante', 'green'] : c >= 50 ? ['Satisfeita', 'blue'] : c >= 30 ? ['Preocupada', 'gold'] : ['Insatisfeita', 'red']);
+
+  function boardCard() {
+    const conf = Math.round(S.board.conf);
+    const [mood, cls] = MOOD_TAG(conf);
+    const main = (S.board.goals || []).find(g => g.k === 'liga');
+    return `<div class="card"><h3>Confiança da diretoria</h3>
+      <div class="row" style="gap:12px"><b class="big-num">${conf}%</b><span class="tag ${cls}">${mood}</span></div>
+      <div class="bar ${conf < 30 ? 'bad' : conf < 50 ? 'warn' : ''}" style="margin:8px 0 12px"><i style="width:${conf}%"></i></div>
+      ${main ? `<div class="muted small">Meta principal</div><div class="row between" style="gap:8px"><b>${esc(main.text)}</b>
+        <span class="tag ${main.status === 'cumprido' ? 'green' : main.status === 'falhou' ? 'red' : ''}" style="flex:0 0 auto">${FB.GOAL_STATUS[main.status]}</span></div>` : ''}
+      <div class="row between small" style="margin-top:10px"><span class="muted">Orçamento p/ contratações</span><b>${money(FB.budgetLeft(S))}</b></div>
+      <div class="btns" style="margin-top:12px"><button class="btn sm" data-act="tab" data-v="diretoria">Metas</button>
+        <button class="btn sm" data-act="ask-budget" ${S.board.askedMore ? 'disabled' : ''}>+ Pedir verba</button></div></div>`;
   }
 
   function mailItem(m) {
@@ -361,25 +506,26 @@
       <b>${esc(m.title)}</b><p class="pre">${esc(m.text)}</p>${extra}</div>`;
   }
 
-  function openInbox(from) {
-    ui.mailFrom = from || '';
-    openSheet(() => {
-      const senders = [...new Set(S.inbox.map(m => m.from || 'Clube'))];
-      const list = S.inbox.filter(m => !ui.mailFrom || m.from === ui.mailFrom);
-      return `<h2>E-mails</h2>
-        <div class="seg">${[['', 'Todos'], ...senders.map(x => [x, x])].map(([k, l]) => `<button class="${ui.mailFrom === k ? 'on' : ''}" data-act="mail-from" data-v="${esc(k)}">${esc(l)}</button>`).join('')}</div>
-        <div class="list">${list.map(mailItem).join('') || '<div class="empty">Nenhum e-mail.</div>'}</div>
-        <button class="btn block" data-act="close">Fechar</button>`;
-    });
+  function viewMensagens() {
+    const senders = [...new Set(S.inbox.map(m => m.from || 'Clube'))];
+    if (ui.mailFrom && !senders.includes(ui.mailFrom)) ui.mailFrom = '';
+    const list = S.inbox.filter(m => !ui.mailFrom || m.from === ui.mailFrom);
+    return `<div class="seg">${[['', 'Todos'], ...senders.map(x => [x, x])].map(([k, l]) => `<button class="${(ui.mailFrom || '') === k ? 'on' : ''}" data-act="mail-from" data-v="${esc(k)}">${k ? SENDER_ICON[k] || '✉️' : ''} ${esc(l)}</button>`).join('')}</div>
+      <div class="list">${list.map(mailItem).join('') || '<div class="empty">Nenhuma mensagem.</div>'}</div>`;
+  }
+
+  // As mensagens só contam como lidas depois de exibidas.
+  function markRead() {
+    if (ui.tab !== 'mensagens' || !S.inbox.some(m => !m.read)) return;
     S.inbox.forEach(m => { m.read = true; });
     FB.save(S);
   }
 
-  function inboxHtml() {
-    if (!S.inbox.length) return '';
-    const unread = S.inbox.filter(m => !m.read).length;
-    return `<div class="card" style="padding:0"><div class="row between" style="padding:14px 14px 0"><h3 style="margin:0">E-mails ${unread ? `<span class="tag red">${unread} novo(s)</span>` : ''}</h3>
-      <button class="btn sm" data-act="inbox">Caixa de entrada</button></div>${S.inbox.slice(0, 5).map(mailItem).join('')}</div>`;
+  function mailPreview() {
+    const unread = S.inbox.filter(m => !m.read);
+    if (!unread.length) return '';
+    return `<div class="card" style="padding:0"><div class="row between" style="padding:14px 14px 0"><h3 style="margin:0">Mensagens <span class="tag red">${unread.length} nova(s)</span></h3>
+      <button class="btn sm" data-act="tab" data-v="mensagens">Abrir</button></div>${unread.slice(0, 3).map(mailItem).join('')}</div>`;
   }
 
   function newsPreview() {
@@ -804,7 +950,7 @@
 
   // ---------- Clube ----------
 
-  function viewClube() {
+  function clubCards() {
     const t = me();
     const f = S.fin.last || {};
     const sf = S.fin.season || {};
@@ -816,8 +962,8 @@
     const opp = FB.userFixture(S);
     const estAtt = FB.attendance(S, t.id, opp ? (opp.h === t.id ? opp.a : opp.h) : t.id, opp ? opp.comp : null);
     const lg = S.fin.lastGate;
-    return `
-      <div class="card"><h3>Finanças</h3>
+    return {
+      financas: `<div class="card"><h3>Finanças</h3>
         <div class="stat-grid" style="margin-bottom:10px">
           <div class="stat"><small>Caixa</small><b class="${t.cash < 0 ? 'pos-red' : ''}">${money(t.cash)}</b></div>
           <div class="stat"><small>Folha salarial</small><b>${money(FB.payroll(S, t))}</b><span class="small muted">/mês</span></div>
@@ -826,8 +972,8 @@
         <details><summary class="small" style="padding:6px 0">Última data: <b class="${total(f) < 0 ? 'pos-red' : 'pos-green'}">${money(total(f))}</b></summary>${finRows(f)}</details>
         <details><summary class="small" style="padding:6px 0">Temporada: <b class="${total(sf) < 0 ? 'pos-red' : 'pos-green'}">${money(total(sf))}</b></summary>${finRows(sf)}</details>
         ${t.cash < 0 ? '<p class="small pos-red">Caixa negativo! Venda jogadores ou reduza a folha.</p>' : ''}
-      </div>
-      <div class="card"><h3>Estádio</h3>
+      </div>`,
+      estadio: `<div class="card"><h3>Estádio</h3>
         <div class="row between"><span>Capacidade</span><b>${t.cap.toLocaleString('pt-BR')}</b></div>
         <div class="row between" style="margin-top:4px"><span>Torcida (público potencial)</span><b>${t.fans.toLocaleString('pt-BR')}</b></div>
         ${lg ? `<div class="row between small muted" style="margin-top:4px"><span>Último jogo em casa</span><span>${lg.att.toLocaleString('pt-BR')} pagantes · ${money(lg.income)}</span></div>` : ''}
@@ -835,8 +981,8 @@
           <div class="stepper"><button class="btn" data-act="ticket" data-v="-5">−</button><b>R$ ${t.ticket}</b><button class="btn" data-act="ticket" data-v="5">+</button></div></div>
         <p class="muted small">Público estimado: ~${estAtt.toLocaleString('pt-BR')} (${Math.round(estAtt / t.cap * 100)}% do estádio) · Referência da divisão: R$ ${FB.REF_TICKET[t.div]}</p>
         <button class="btn block" data-act="expand" ${t.cash < 5000 * FB.SEAT_COST ? 'disabled' : ''}>Ampliar +5.000 lugares (${money(5000 * FB.SEAT_COST)})</button>
-      </div>
-      <div class="card"><h3>Diretoria</h3>
+      </div>`,
+      diretoria: `<div class="card"><h3>Diretoria</h3>
         <div class="row"><span class="small grow">Confiança no treinador</span><b class="small">${Math.round(S.board.conf)}%</b></div>
         <div class="bar" style="margin:6px 0 12px"><i style="width:${S.board.conf}%"></i></div>
         <b class="small">Metas da temporada</b>
@@ -847,12 +993,11 @@
           <div class="stat"><small>Teto da folha</small><b>${money(S.board.wageCap || 0)}</b><span class="small muted">/mês</span></div>
         </div>
         <button class="btn block" style="margin-top:10px" data-act="ask-budget" ${S.board.askedMore ? 'disabled' : ''}>${S.board.askedMore ? 'Pedido de verba já feito nesta temporada' : '💰 Pedir mais verba à diretoria'}</button>
-        <p class="muted small">Treinador: ${esc(S.coach)}</p>
-      </div>
-      <div class="card"><h3>Carreira</h3>${S.history.length ? S.history.map(h => `
+      </div>`,
+      carreira: `${contractCard()}<div class="card"><h3>Carreira de ${esc(S.coach)}</h3>${S.history.length ? S.history.map(h => `
         <div class="row between small" style="padding:4px 0"><span>${h.season} · ${esc(T(h.team).name)}</span>
-        <span>${h.pos ? h.pos + 'º ' : ''}${FB.DIV_NAMES[h.div]}${h.titles && h.titles.length ? ' · 🏆 ' + esc(h.titles.join(', ')) : ''}</span></div>`).join('') : '<p class="muted small" style="margin:0">Primeira temporada.</p>'}</div>
-      <div class="card"><h3>Partidas</h3>
+        <span>${h.pos ? h.pos + 'º ' : ''}${FB.DIV_NAMES[h.div]}${h.titles && h.titles.length ? ' · 🏆 ' + esc(h.titles.join(', ')) : ''}</span></div>`).join('') : '<p class="muted small" style="margin:0">Primeira temporada.</p>'}</div>`,
+      config: `<div class="card"><h3>Partidas</h3>
         <div class="row between"><span>Velocidade padrão</span>
           <div class="seg" style="margin:0">${[1, 2, 4].map(v => `<button class="${S.settings.speed === v ? 'on' : ''}" data-act="speed-default" data-v="${v}">${v}x</button>`).join('')}</div></div>
         <div class="row between" style="margin-top:8px"><span>Pausar no intervalo</span>
@@ -863,11 +1008,53 @@
           <button class="btn" data-act="export-save">Exportar save</button>
           <button class="btn" data-act="template">Exportar base (CSV)</button></div>
         <button class="btn block" data-act="import-open" data-v="game">Atualizar elencos (importar)</button>
-        <button class="btn danger block" style="margin-top:8px" data-act="new-game-confirm">Novo jogo</button>
-      </div>`;
+        <button class="btn block" style="margin-top:8px" data-act="exit">Trocar de carreira</button>
+        <button class="btn danger block" style="margin-top:8px" data-act="slot-del" data-v="${FB.slot}">Apagar esta carreira</button>
+      </div>`,
+    };
   }
 
-  const VIEWS = { inicio: viewInicio, elenco: viewElenco, jogos: viewJogos, mercado: viewMercado, noticias: viewNoticias, clube: viewClube };
+  function contractCard() {
+    const c = S.contract;
+    if (!c) return '';
+    return `<div class="card"><h3>📋 Contrato</h3>
+      <div class="row between small" style="padding:3px 0"><span class="muted">Clube</span><b>${esc(T(c.club).name)}</b></div>
+      <div class="row between small" style="padding:3px 0"><span class="muted">Salário mensal</span><b class="pos-green">${money(c.sal)}</b></div>
+      <div class="row between small" style="padding:3px 0"><span class="muted">Contrato até</span><b>Temporada ${c.until}</b></div></div>`;
+  }
+
+  // Seções abertas pelo menu "Mais".
+  const SECTIONS = {
+    calendario: ['Calendário', () => calendarView()],
+    noticias: ['Notícias', () => viewNoticias()],
+    jogos: ['Competições', () => viewJogos()],
+    financas: ['Finanças', () => clubCards().financas],
+    estadio: ['Estádio', () => clubCards().estadio],
+    diretoria: ['Diretoria', () => clubCards().diretoria],
+    carreira: ['Carreira', () => clubCards().carreira],
+    config: ['Configurações', () => clubCards().config],
+  };
+
+  function calendarView() {
+    const list = FB.upcoming(S, S.userId, 80);
+    return list.length ? `<div class="card">${list.map(upcomingRow).join('')}</div>`
+      : '<div class="empty">Nenhum jogo marcado até o fim da temporada.</div>';
+  }
+
+  const MORE = [
+    ['Hoje', [['calendario', '📅', 'Calendário'], ['noticias', '📰', 'Notícias']]],
+    ['Clube', [['elenco:tatica', '♟️', 'Tática'], ['elenco:treino', '🏋️', 'Treino'], ['elenco:medico', '🩺', 'Médico'],
+      ['financas', '💵', 'Finanças'], ['estadio', '🏟️', 'Estádio'], ['diretoria', '🏛️', 'Diretoria']]],
+    ['Mundo', [['jogos', '🏆', 'Competições'], ['jogos:__gal', '🥇', 'Sala de troféus']]],
+    ['Você', [['carreira', '👔', 'Carreira'], ['config', '⚙️', 'Configurações'], ['exit', '🔁', 'Trocar de carreira']]],
+  ];
+
+  function openMore() {
+    openSheet(() => MORE.map(([sec, items]) => `<div class="more-sec">${sec}</div>
+      <div class="more-grid">${items.map(([k, ico, label]) => `<button class="more-item" data-act="more-go" data-v="${k}"><span>${ico}</span>${label}</button>`).join('')}</div>`).join(''));
+  }
+
+  const VIEWS = { inicio: viewInicio, elenco: viewElenco, mensagens: viewMensagens, mercado: viewMercado };
 
   // ---------- Pré-jogo ----------
 
@@ -1240,25 +1427,65 @@
 
   // ---------- Ações ----------
 
+  function enterSlot(n, state) {
+    FB.slot = n;
+    S = state;
+    Object.assign(ui, { setup: null, welcome: false, tab: 'inicio', elenco: 'escalacao', comp: null, compPh: null, compRound: null, mailFrom: '', tipOff: null });
+    render();
+    window.scrollTo(0, 0);
+  }
+
   const A = {
     close: () => { closeSheet(); render(); },
     noop: () => {},
     tab: d => { ui.tab = d.v; ui.compRound = null; render(); window.scrollTo(0, 0); },
-    continue: () => { S = FB.load(); render(); },
-    'new-game': d => { ui.setup = { world: FB.createWorld({ pack: d.v }), div: 0, sel: null, coach: '' }; render(); },
-    'new-game-confirm': () => confirmSheet('Novo jogo', 'Sua carreira atual será apagada. Deseja continuar?', 'Apagar e recomeçar', () => {
-      FB.wipe(); S = null; ui.setup = null; ui.tab = 'inicio'; render();
-    }, true),
-    'setup-back': () => { ui.setup = null; S = FB.load(); if (!validSave(S)) S = null; render(); },
+    'new-game': d => {
+      if (FB.freeSlot() == null) { toast(`Limite de ${FB.MAX_SLOTS} carreiras atingido.`); return; }
+      ui.setup = { world: FB.createWorld({ pack: d.v }), div: 0, sel: null, coach: '' };
+      render();
+    },
+    'setup-back': () => { ui.setup = null; render(); },
+    'slot-play': async d => {
+      const n = +d.v;
+      const st = await FB.loadSlot(n);
+      if (!validSave(st)) { toast('Não consegui abrir esta carreira.', 3500); return; }
+      enterSlot(n, st);
+    },
+    'slot-del': d => {
+      const n = +d.v;
+      const m = FB.slots()[n];
+      confirmSheet('Apagar carreira', `Apagar a carreira${m ? ` de ${m.coach} no ${m.club}` : ''}? Não dá para desfazer.`, 'Apagar', () => {
+        FB.deleteSlot(n);
+        if (FB.slot === n) { S = null; FB.slot = null; }
+        render();
+        toast('Carreira apagada.');
+      }, true);
+    },
+    exit: () => { if (S) FB.save(S); closeSheet(); S = null; FB.slot = null; ui.welcome = false; render(); window.scrollTo(0, 0); },
+    'welcome-done': () => { ui.welcome = false; render(); window.scrollTo(0, 0); },
+    more: () => openMore(),
+    'more-go': d => {
+      closeSheet();
+      if (d.v === 'exit') { A.exit(); return; }
+      const [k, sub] = d.v.split(':');
+      if (k === 'elenco') ui.elenco = sub;
+      if (k === 'jogos') { ui.comp = sub || null; ui.compPh = null; ui.compRound = null; }
+      ui.tab = k;
+      render();
+      window.scrollTo(0, 0);
+    },
+    'tip-off': () => { ui.tipOff = S.di; render(); },
     'setup-div': d => { ui.setup.coach = document.getElementById('coach').value; ui.setup.div = +d.v; ui.setup.sel = null; render(); },
     'setup-pick': d => { ui.setup.coach = document.getElementById('coach').value; ui.setup.sel = +d.id; render(); },
     'setup-start': () => {
       const st = ui.setup;
       const coach = document.getElementById('coach').value.trim() || 'Treinador';
+      const n = FB.freeSlot();
+      if (n == null) { toast(`Limite de ${FB.MAX_SLOTS} carreiras atingido.`); return; }
       FB.startCareer(st.world, coach, st.sel);
-      S = st.world;
+      enterSlot(n, st.world);
       FB.save(S);
-      ui.setup = null; ui.tab = 'inicio'; ui.comp = null;
+      ui.welcome = true;
       render();
     },
     'import-open': d => openImport(d.v),
@@ -1295,11 +1522,10 @@
     'rot-toggle': () => { const t = me(); t.rotation = { min: 65, ...(t.rotation || {}) }; t.rotation.auto = !t.rotation.auto; FB.save(S); render(); },
     'rot-min': d => { const t = me(); t.rotation = { auto: false, ...(t.rotation || {}), min: +d.v }; FB.save(S); render(); },
     prio: d => { const t = me(); t.prio = t.prio || {}; t.prio[d.k] = d.v; FB.save(S); render(); },
-    inbox: () => openInbox(),
-    'mail-from': d => { ui.mailFrom = d.v; refreshSheet(); },
+    'mail-from': d => { ui.mailFrom = d.v; render(); },
     'ask-budget': () => { const r = FB.askBudget(S); FB.save(S); render(); toast(r.msg, 3500); },
     'end-season': () => { const sm = FB.endSeason(S); ui.comp = null; render(); showSeasonSummary(sm); },
-    'take-job': d => { FB.takeJob(S, +d.id); closeSheet(); ui.tab = 'inicio'; ui.comp = null; render(); toast(`Bem-vindo ao ${me().name}!`); },
+    'take-job': d => { FB.takeJob(S, +d.id); closeSheet(); ui.tab = 'inicio'; ui.comp = null; ui.welcome = true; render(); window.scrollTo(0, 0); },
     'offer-yes': d => { const r = FB.answerOffer(S, +d.id, true); FB.save(S); render(); toast(r.ok ? 'Venda concluída!' : r.msg); },
     'offer-no': d => { FB.answerOffer(S, +d.id, false); FB.save(S); render(); },
     'treat-open': d => openPlayer(+d.id),
@@ -1472,7 +1698,8 @@
 
   window.addEventListener('pagehide', () => { if (S && !ui.live) FB.save(S); });
 
-  render();
+  FB.onSaveError = () => toast('Não foi possível salvar o jogo. Verifique o espaço livre do aparelho.', 4000);
+  FB.migrateLegacy().then(render);
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});

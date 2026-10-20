@@ -1115,7 +1115,7 @@
     }
 
     const um = matches.find(m => m.user >= 0);
-    if (um) { FB.boardAfterMatch(state, um); FB.fanMail(state, um); }
+    if (um) { FB.boardAfterMatch(state, um); FB.fanMail(state, um); state.lastMatch = FB.matchRecap(state, um, date.day); }
     FB.newsAfterDate(state, matches);
 
     const today = date.day;
@@ -1320,6 +1320,7 @@
 
   FB.fire = state => {
     state.fired = true;
+    state.contract = null;
     state.jobOffers = FB.jobOffers(state, false);
     const t = state.teams[state.userId];
     FB.msg(state, 'Você foi demitido', `A diretoria do ${t.name} perdeu a paciência e decidiu trocar o comando técnico.`, { from: 'Diretoria' });
@@ -1348,6 +1349,7 @@
     FB.fixLineup(state, t);
     FB.setObjective(state);
     FB.boardSetup(state);
+    FB.newContract(state);
     FB.news(state, 'noticia', `${t.name} anuncia ${state.coach}`, `${state.coach} é o novo treinador do ${t.name}.`, { team: tid });
     FB.save(state);
   };
@@ -1361,6 +1363,8 @@
     FB.setObjective(state);
     FB.msg(state, `Bem-vindo ao ${t.name}!`, `A diretoria apresentou ${state.coach} como novo treinador. Objetivo na ${FB.DIV_NAMES[t.div]}: ${state.board.text}.`, { from: 'Diretoria' });
     FB.boardSetup(state);
+    FB.newContract(state);
+    state.started = Date.now();
     FB.news(state, 'noticia', `${t.name} tem novo treinador`, `${state.coach} assume o ${t.name} para a temporada ${state.season}.`, { team: teamId });
     FB.news(state, 'atualizacao', `Começa a temporada ${state.season}`, 'Os estaduais abrem o calendário. A janela de transferências fica aberta até o início de abril.');
   };
@@ -1663,8 +1667,9 @@
       if (t.id !== state.userId) t.lineup = FB.bestLineup(state, t);
       else FB.fixLineup(state, t);
     }
-    if (!state.fired) FB.setObjective(state);
+    if (!state.fired) { FB.setObjective(state); FB.renewContract(state); }
     state.lastSummary = summary;
+    state.lastMatch = null;
     if (state.fired) FB.msg(state, `Temporada ${state.season}`, 'Procure um novo clube para continuar.', { from: 'Diretoria' });
     else FB.boardSetup(state);
     FB.news(state, 'atualizacao', `Começa a temporada ${state.season}`, 'Os estaduais abrem o calendário. A janela de transferências fica aberta até o início de abril.');
@@ -1741,21 +1746,97 @@
     if (!state) return state;
     for (const m of state.inbox || []) if (!m.from) m.from = m.offer ? 'Mercado' : m.injury ? 'Departamento médico' : 'Clube';
     if (state.userId != null && !state.board.goals && !state.fired) FB.boardSetup(state, true);
+    if (state.userId != null && !state.contract && !state.fired) FB.newContract(state);
     return state;
   };
 
   // ---------- Persistência ----------
+  // Até 3 carreiras no IndexedDB: cada save passa de 1 MB, grande demais para várias no localStorage.
+  // O resumo de cada carreira fica no localStorage para a tela inicial abrir na hora.
 
+  FB.MAX_SLOTS = 3;
+  FB.slot = null;
+  const META_KEY = 'prancheta.slots';
+  const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } };
+  const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignora */ } };
+  // Sem IndexedDB, cada carreira vai para uma chave do localStorage (a 1ª é a mesma da versão anterior).
+  const lsKey = n => (n === 1 ? FB.SAVE_KEY : FB.SAVE_KEY + '.' + n);
+
+  let dbP = null;
+  const db = () => dbP || (dbP = new Promise((res, rej) => {
+    if (typeof indexedDB === 'undefined') { rej(new Error('IndexedDB indisponível')); return; }
+    const r = indexedDB.open('prancheta', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('saves');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+  const idb = (mode, fn) => db().then(d => new Promise((res, rej) => {
+    const tx = d.transaction('saves', mode);
+    const req = fn(tx.objectStore('saves'));
+    tx.oncomplete = () => res(req.result);
+    tx.onerror = tx.onabort = () => rej(tx.error);
+  }));
+  const putRaw = (n, raw) => idb('readwrite', st => st.put(raw, n))
+    .then(() => { if (n !== 1) lsDel(lsKey(n)); },
+      () => { if (!lsSet(lsKey(n), raw)) throw new Error('Sem espaço para salvar'); });
+  const getRaw = n => idb('readonly', st => st.get(n)).catch(() => null).then(v => v ?? lsGet(lsKey(n)));
+  const delRaw = n => idb('readwrite', st => st.delete(n)).catch(() => {}).then(() => lsDel(lsKey(n)));
+
+  FB.slots = () => { try { return JSON.parse(lsGet(META_KEY)) || {}; } catch (e) { return {}; } };
+  const setMeta = (n, m) => {
+    const all = FB.slots();
+    if (m) all[n] = m; else delete all[n];
+    lsSet(META_KEY, JSON.stringify(all));
+  };
+  FB.freeSlot = () => {
+    const used = FB.slots();
+    for (let n = 1; n <= FB.MAX_SLOTS; n++) if (!used[n]) return n;
+    return null;
+  };
+
+  // Resumo mostrado no cartão da carreira.
+  FB.slotMeta = state => {
+    const t = state.teams[state.userId];
+    const st = FB.leagueStanding(state, t.id);
+    const lg = state.comps[FB.leagueKey(t.div)];
+    return {
+      coach: state.coach, club: t.name, short: t.short, c1: t.c1, c2: t.c2, div: t.div, season: state.season,
+      round: lg ? lg.md : 0, rounds: lg ? lg.sched.length : 0, pos: st && st.row.j ? st.pos : null,
+      fired: !!state.fired, started: state.started || null, updated: Date.now(),
+    };
+  };
+
+  // As gravações entram numa fila para não chegarem fora de ordem.
+  let queue = Promise.resolve();
+  FB.onSaveError = null;
   FB.save = state => {
-    try { localStorage.setItem(FB.SAVE_KEY, JSON.stringify(state)); return true; } catch (e) { return false; }
+    const n = FB.slot;
+    if (n == null || !state || state.userId == null) return false;
+    let raw;
+    try { raw = JSON.stringify(state); } catch (e) { return false; }
+    setMeta(n, FB.slotMeta(state));
+    queue = queue.then(() => putRaw(n, raw)).catch(e => { if (FB.onSaveError) FB.onSaveError(e); });
+    return true;
   };
-  FB.load = () => {
-    try {
-      const raw = localStorage.getItem(FB.SAVE_KEY);
-      return raw ? FB.migrate(JSON.parse(raw)) : null;
-    } catch (e) { return null; }
+  FB.loadSlot = n => queue.then(() => getRaw(n)).then(raw => (raw ? FB.migrate(JSON.parse(raw)) : null)).catch(() => null);
+  FB.deleteSlot = n => {
+    setMeta(n, null);
+    queue = queue.then(() => delRaw(n)).catch(() => {});
+    return queue;
   };
-  FB.wipe = () => { try { localStorage.removeItem(FB.SAVE_KEY); } catch (e) { /* ignora */ } };
+
+  // A carreira salva pela versão anterior (uma só, no localStorage) vira a carreira 1.
+  FB.migrateLegacy = async () => {
+    const raw = lsGet(FB.SAVE_KEY);
+    if (!raw || FB.slots()[1]) return;
+    let state;
+    try { state = FB.migrate(JSON.parse(raw)); } catch (e) { return; }
+    if (!state || state.userId == null) return;
+    setMeta(1, FB.slotMeta(state));
+    // Só apaga a cópia antiga depois de gravar no IndexedDB.
+    try { await idb('readwrite', st => st.put(raw, 1)); lsDel(FB.SAVE_KEY); } catch (e) { /* continua no localStorage */ }
+  };
 
   FB.fmtMoney = v => {
     const neg = v < 0;

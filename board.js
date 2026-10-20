@@ -185,4 +185,49 @@
       t.fans = Math.round(t.fans * 1.01);
     }
   };
+  // ---------- Contrato do treinador ----------
+
+  // Salário mensal conforme a divisão e o tamanho do clube.
+  const coachSalary = state => {
+    const t = state.teams[state.userId];
+    const base = [180000, 70000, 30000, 15000][t.div] ?? 15000;
+    const k = clamp(0.7 + (FB.teamStrength(state, t) - 55) / 50, 0.5, 1.6);
+    return Math.round(base * k / 1000) * 1000;
+  };
+
+  FB.newContract = state => {
+    const t = state.teams[state.userId];
+    const years = t.div <= 1 ? 2 : 1;
+    state.contract = { club: t.id, sal: coachSalary(state), from: state.season, until: state.season + years - 1 };
+  };
+
+  // Na virada do ano, renova o contrato vencido. Com a diretoria satisfeita, vem aumento.
+  FB.renewContract = state => {
+    const c = state.contract;
+    if (!c || c.club !== state.userId) { FB.newContract(state); return; }
+    if (c.until >= state.season) return;
+    const conf = state.board.conf;
+    const raise = conf >= 75 ? 1.2 : conf >= 50 ? 1.1 : 1;
+    const years = conf >= 75 ? 2 : 1;
+    c.sal = Math.max(Math.round(c.sal * raise / 1000) * 1000, coachSalary(state));
+    c.until = state.season + years - 1;
+    diretoria(state, 'Contrato renovado',
+      `A diretoria renovou o seu contrato até o fim de ${c.until}. Salário mensal: ${FB.fmtMoney(c.sal)}${raise > 1 ? ' (com aumento)' : ''}.`);
+  };
+
+  // Resumo da última partida do usuário, com o melhor jogador em campo do time.
+  FB.matchRecap = (state, m, day) => {
+    const side = m.sides[m.user];
+    const w = m.matchWinner();
+    let best = null;
+    for (const pid of side.played) {
+      const p = state.players[pid];
+      if (p && p.lastRt != null && (!best || p.lastRt > best.lastRt)) best = p;
+    }
+    return {
+      day, label: FB.compLabel(state, m), h: m.sides[0].tid, a: m.sides[1].tid, hg: m.sides[0].goals, ag: m.sides[1].goals,
+      res: w === -1 ? 'E' : w === m.user ? 'V' : 'D',
+      best: best ? { pid: best.id, rt: best.lastRt, goals: side.scorers.filter(x => x.pid === best.id).length } : null,
+    };
+  };
 })(window.FB);
