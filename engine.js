@@ -720,6 +720,41 @@
   const HURT_TXT = ['sente a coxa e pede atendimento', 'cai após dividida e não consegue continuar', 'torce o tornozelo num lance isolado',
     'sente dores e faz sinal para o banco', 'leva uma pancada forte e precisa sair'];
 
+  FB.MOMENTS = {
+    contra: {
+      title: 'Contra-ataque!',
+      opts: { chutar: ['Chutar de primeira', 'Finaliza rápido, antes da zaga voltar'], driblar: ['Driblar o goleiro', 'Arrisca o drible na saída do goleiro'], tocar: ['Tocar para o companheiro', 'Rola para quem chega livre'] },
+      hints: {
+        chutar: '{n} recebe na entrada da área com espaço para bater. A zaga vem correndo atrás.',
+        driblar: '{n} sai cara a cara. {gk} vem adiantado, abrindo espaço para o drible.',
+        tocar: '{n} puxa o contra-ataque e {m} chega livre pelo outro lado.',
+      },
+    },
+    falta: {
+      title: 'Falta perigosa!',
+      opts: { direto: ['Bater direto', 'Chute no gol, por cima da barreira'], cruzar: ['Cruzar na área', 'Bola alta para os zagueiros e atacantes'], ensaiada: ['Jogada ensaiada', 'Toque curto treinado no CT'] },
+      hints: {
+        direto: 'Falta frontal, na meia-lua. {n} ajeita a bola com carinho.',
+        cruzar: 'Falta pelo lado da área. A defesa adversária é baixa e não tem bom jogo aéreo.',
+        ensaiada: 'Falta perto da área, com a barreira mal posicionada. Tem gente livre no lado.',
+      },
+    },
+    penalti: {
+      title: 'Pênalti!',
+      text: 'Pênalti para o {club}! {n} pega a bola para cobrar. {gk} se prepara.',
+      opts: { esquerda: ['Canto esquerdo', 'Bola no canto'], meio: ['No meio', 'Arriscado: só funciona se o goleiro pular'], direita: ['Canto direito', 'Bola no canto'] },
+    },
+    defesa: {
+      title: 'Perigo no seu campo!',
+      opts: { falta: ['Fazer a falta', 'Para o lance, mas leva cartão'], bote: ['Dar o bote', 'Tenta roubar a bola'], recuar: ['Recuar e fechar', 'Espera o chute com a defesa fechada'] },
+      hints: {
+        falta: '{n} escapa em velocidade e só {d} pode pará-lo antes da área.',
+        bote: '{n} domina mal a bola, bem na frente de {d}.',
+        recuar: '{n} vem em velocidade; {d} está no mano a mano, mas a defesa já está voltando.',
+      },
+    },
+  };
+
   class Match {
     constructor(state, hId, aId, comp) {
       this.state = state;
@@ -729,6 +764,9 @@
       this.done = false;
       this.pens = null;
       this.pending = null;
+      this.moment = null;
+      this.moments = 0;
+      this.interactive = false; // a interface liga para o usuário decidir os lances decisivos
       this.today = FB.today(state);
       this.sides = [hId, aId].map((tid, i) => {
         const t = state.teams[tid];
@@ -737,7 +775,7 @@
         const lineup = t.lineup.slice();
         const cap = t.captain != null && lineup.includes(t.captain) ? state.players[t.captain] : null;
         return {
-          tid, i, home: i === 0, formation: t.formation, posture: FB.tac(t, 'posture'), press: FB.tac(t, 'press'),
+          tid, i, home: i === 0, formation: t.formation, formationDef: FB.FORMATIONS[t.formationDef] ? t.formationDef : t.formation, posture: FB.tac(t, 'posture'), press: FB.tac(t, 'press'),
           tempo: FB.tac(t, 'tempo'), line: FB.tac(t, 'line'), focus: FB.tac(t, 'focus'), passing: FB.tac(t, 'passing'),
           boost: 1 + (cap && cap.mo >= 60 ? 0.01 : 0),
           cohesion: tid === state.userId && t.training === 'tatico' ? 1.025 : 1, lineup,
@@ -760,7 +798,7 @@
       else if (s.line === 'baixa') { def *= 1.05; att *= 0.96; if (o.focus === 'contra') def *= 1.03; }
       if (s.passing === 'curto') { mid *= 1.05; att *= 0.98; }
       else if (s.passing === 'direto') { att *= 1.03; mid *= 0.96; }
-      const f = FB.FORMATIONS[s.formation], fo = FB.FORMATIONS[o.formation];
+      const f = FB.FORMATIONS[s.formation], fo = FB.FORMATIONS[o.formationDef];
       if (s.focus === 'lados') att *= fo.L === 0 ? 1.07 : f.L === 0 ? 0.96 : 1.02;
       else if (s.focus === 'meio') att *= f.M >= fo.M ? 1.05 : 0.97;
       else if (s.focus === 'contra') {
@@ -770,20 +808,40 @@
       return { att, def, mid };
     }
 
-    rating(side) {
-      const slots = FB.slotsOf(side.formation);
+    // Força de cada setor numa forma (formação + jogadores nos slots).
+    shape(side, formation, lineup) {
+      const slots = FB.slotsOf(formation);
       let att = 0, def = 0, mid = 0, gk = 25;
       slots.forEach((pos, i) => {
-        const pid = side.lineup[i];
+        const pid = lineup[i];
         if (pid == null) return;
         let e = FB.effective(this.p(pid), pos, side.en[pid]) * side.boost * side.cohesion;
         if (side.hurt.has(pid)) e *= 0.4;
         if (pos === 'G') gk = e;
         else { att += e * ATT_W[pos]; def += e * DEF_W[pos]; mid += e * MID_W[pos]; }
       });
+      return { att, def, mid, gk };
+    }
+
+    // Os mesmos jogadores redistribuídos na formação sem a bola.
+    defLineup(side) {
+      const key = side.formationDef + '|' + side.lineup.join(',');
+      if (side.defKey !== key) {
+        side.defKey = key;
+        side.defCache = FB.fillSlots(this.state, side.formationDef, side.lineup.filter(x => x != null).map(pid => this.p(pid)));
+      }
+      return side.defCache;
+    }
+
+    // Com a bola vale a formação de ataque; sem a bola, a de defesa. Trocar de forma tem um pequeno custo de transição.
+    rating(side) {
+      const a = this.shape(side, side.formation, side.lineup);
+      const two = side.formationDef !== side.formation;
+      const d = two ? this.shape(side, side.formationDef, this.defLineup(side)) : a;
+      const trans = two ? 0.97 : 1;
       const k = side.posture === 'ofensivo' ? [1.1, 0.9] : side.posture === 'defensivo' ? [0.88, 1.1] : [1, 1];
       const m = this.styleMods(side, this.sides[1 - side.i]);
-      return { att: att / 4.8 * k[0] * m.att, def: (def + gk * 1.2) / 6.5 * k[1] * m.def, mid: mid * m.mid };
+      return { att: a.att / 4.8 * k[0] * m.att * (two ? 0.985 : 1), def: (d.def + d.gk * 1.2) / 6.5 * k[1] * m.def, mid: (a.mid + d.mid) / 2 * m.mid * trans };
     }
 
     ev(type, side, text, pid) {
@@ -805,7 +863,7 @@
 
     // Enquanto um lesionado do usuário aguarda substituição, o jogo não anda.
     step() {
-      if (this.done || this.pending) return;
+      if (this.done || this.pending || this.moment) return;
       this.minute++;
       const r = this.sides.map(s => this.rating(s));
       for (let i = 0; i < 2; i++) {
@@ -816,7 +874,8 @@
         lambda *= this.comp.neutral ? 1 : s.home ? 1.12 : 0.95;
         const pr = lambda / 90;
         const x = Math.random();
-        if (x < pr) this.goal(s);
+        if (x < pr * 3.2 && this.interactive && !this.moment && this.moments < 4 && Math.random() < 0.28 && this.startMoment(i)) { /* decide o usuário */ }
+        else if (x < pr) this.goal(s);
         else if (x < pr * 3.2) {
           const f = this.onField(s, false);
           if (f.length) {
@@ -842,25 +901,129 @@
       const f = this.onField(s);
       if (!f.length) return;
       const pid = weighted(f, c => SCORE_W[c.pos] * this.p(c.pid).ovr / 70 * (s.hurt.has(c.pid) ? 0.2 : 1)).pid;
+      this.scoreGoal(s, pid, `GOL! ${this.p(pid).n} ${pick(GOAL_TXT)}`);
+    }
+
+    scoreGoal(s, pid, text) {
       s.goals++;
       s.scorers.push({ pid, m: this.minute });
-      this.ev('goal', s.i, `GOL! ${this.p(pid).n} ${pick(GOAL_TXT)}`, pid);
+      this.ev('goal', s.i, text, pid);
+    }
+
+    // ---------- Lances decisivos ----------
+    // Num lance de perigo do usuário (ou contra ele), o jogo para e ele escolhe a jogada.
+    // A dica da situação aponta a melhor escolha; o resultado ainda depende da qualidade dos jogadores.
+
+    startMoment(i) {
+      const s = this.sides[i], o = this.sides[1 - i];
+      const u = this.user;
+      if (u < 0) return false;
+      const f = this.onField(s, false).filter(c => !s.hurt.has(c.pid));
+      if (!f.length) return false;
+      const pid = weighted(f, c => SCORE_W[c.pos] * this.p(c.pid).ovr / 70).pid;
+      const mates = f.filter(c => c.pid !== pid && (c.pos === 'A' || c.pos === 'M'));
+      const mate = mates.length ? weighted(mates, c => SCORE_W[c.pos]).pid : null;
+      let kind;
+      if (i === u) kind = Math.random() < 0.08 ? 'penalti' : Math.random() < 0.55 ? 'contra' : 'falta';
+      else kind = 'defesa';
+      const M = { kind, side: i, pid, mate, m: this.minute };
+      const D = FB.MOMENTS[kind];
+      M.best = kind === 'penalti' ? null : pick(Object.keys(D.opts).filter(k => k !== 'tocar' || mate != null));
+      if (kind === 'falta') {
+        const takers = f.filter(c => c.pos === 'M' || c.pos === 'A');
+        M.pid = (takers.length ? takers : f).slice().sort((a, b) => this.p(b.pid).ovr - this.p(a.pid).ovr)[0].pid;
+      }
+      if (kind === 'defesa') {
+        const defs = this.onField(o, false).filter(c => !o.hurt.has(c.pid));
+        if (!defs.length) return false;
+        M.def = weighted(defs, c => DEF_W[c.pos] + 0.1).pid;
+      }
+      const name = id => (id != null ? this.p(id).n : '');
+      M.text = (kind === 'penalti' ? D.text : D.hints[M.best])
+        .replace('{n}', name(M.pid)).replace('{m}', name(mate)).replace('{d}', name(M.def))
+        .replace('{gk}', this.gkName(o)).replace('{club}', this.state.teams[s.tid].name);
+      this.moment = M;
+      this.moments++;
+      return true;
+    }
+
+    resolveMoment(choice) {
+      const M = this.moment;
+      if (!M) return null;
+      const D = FB.MOMENTS[M.kind];
+      if (!D.opts[choice]) choice = Object.keys(D.opts)[0];
+      this.moment = null;
+      const s = this.sides[M.side], o = this.sides[1 - M.side];
+      const sh = this.p(M.pid);
+      const gk = o.lineup[0] != null ? this.p(o.lineup[0]).ovr : 40;
+      const edge = (sh.ovr - gk) / 200;
+      const good = choice === M.best ? 0.2 : 0;
+      const r = Math.random();
+      let goal = false, scorer = M.pid, miss;
+      if (M.kind === 'contra') {
+        if (choice === 'tocar' && M.mate != null) scorer = M.mate;
+        goal = r < 0.24 + edge + good;
+        miss = { chutar: `${sh.n} bate de primeira, mas ${this.gkName(o)} defende!`, driblar: `${this.gkName(o)} fecha o ângulo e fica com a bola`, tocar: 'O passe sai forte demais e a zaga corta' }[choice];
+      } else if (M.kind === 'falta') {
+        if (choice !== 'direto') {
+          const heads = this.onField(s, false).filter(c => c.pos === 'Z' || c.pos === 'A');
+          if (heads.length) scorer = weighted(heads, c => this.p(c.pid).ovr).pid;
+        }
+        goal = r < 0.17 + edge + good;
+        miss = { direto: `${sh.n} bate na barreira`, cruzar: 'O cruzamento passa por todo mundo', ensaiada: 'A jogada ensaiada não funciona e a zaga afasta' }[choice];
+      } else if (M.kind === 'penalti') {
+        const dive = Math.random() < 0.16 ? 'meio' : pick(['esquerda', 'direita']);
+        const skill = (sh.ovr - gk) / 300;
+        goal = choice === 'meio' ? (dive === 'meio' ? r < 0.12 : r < 0.92 + skill) : dive === choice ? r < 0.28 + skill : r < 0.94 + skill;
+        miss = dive === choice ? `${this.gkName(o)} acerta o canto e defende o pênalti!` : `${sh.n} isola a cobrança!`;
+      } else {
+        // Defesa: o adversário (lado M.side) ataca o time do usuário.
+        const def = this.p(M.def);
+        if (choice === 'falta') {
+          const slot = o.lineup.indexOf(M.def);
+          if (slot >= 0) this.bookPlayer(o, slot, false);
+          // A falta evita o lance, mas dá ao adversário uma bola parada perto da área.
+          if (Math.random() < 0.2) {
+            const txt = `GOL! ${sh.n} cobra a falta e marca`;
+            this.scoreGoal(s, M.pid, txt);
+            return { goal: true, text: `${def.n} fez a falta, mas ${sh.n} converte a cobrança.` };
+          }
+          this.ev('chance', M.side, `${def.n} para o contra-ataque com falta`);
+          return { goal: false, text: `${def.n} faz a falta e evita o perigo.` };
+        }
+        const win = choice === 'bote' ? Math.random() < 0.4 + (def.ovr - sh.ovr) / 150 + good : false;
+        if (win) { this.ev('chance', 1 - M.side, `${def.n} dá o bote e rouba a bola!`, M.def); return { goal: false, text: `${def.n} rouba a bola!` }; }
+        goal = r < (choice === 'bote' ? 0.55 : 0.36 - good);
+        miss = choice === 'recuar' ? `A defesa se fecha e ${sh.n} chuta para fora` : `${sh.n} passa por ${def.n}, mas finaliza mal`;
+      }
+      if (goal) {
+        const txt = `GOL! ${this.p(scorer).n} ${M.kind === 'penalti' ? 'converte o pênalti' : pick(GOAL_TXT)}`;
+        this.scoreGoal(s, scorer, txt);
+        return { goal: true, text: txt };
+      }
+      this.ev('chance', M.side, miss, M.pid);
+      return { goal: false, text: miss };
     }
 
     card(s, direct) {
       const f = this.onField(s);
       if (!f.length) return;
       const c = weighted(f, x => (x.pos === 'G' ? 0.1 : x.pos === 'Z' ? 1.4 : 1));
-      const name = this.p(c.pid).n;
+      this.bookPlayer(s, c.slot, direct);
+    }
+
+    bookPlayer(s, slot, direct) {
+      const pid = s.lineup[slot];
+      const name = this.p(pid).n;
       if (!direct) {
-        s.yellow[c.pid] = (s.yellow[c.pid] || 0) + 1;
-        if (s.yellow[c.pid] < 2) { this.ev('yellow', s.i, `Cartão amarelo para ${name}`, c.pid); return; }
-        this.ev('red', s.i, `Segundo amarelo! ${name} é expulso`, c.pid);
+        s.yellow[pid] = (s.yellow[pid] || 0) + 1;
+        if (s.yellow[pid] < 2) { this.ev('yellow', s.i, `Cartão amarelo para ${name}`, pid); return; }
+        this.ev('red', s.i, `Segundo amarelo! ${name} é expulso`, pid);
       } else {
-        this.ev('red', s.i, `Cartão vermelho direto para ${name}!`, c.pid);
+        this.ev('red', s.i, `Cartão vermelho direto para ${name}!`, pid);
       }
-      s.sent.push({ pid: c.pid, direct });
-      s.lineup[c.slot] = null;
+      s.sent.push({ pid, direct });
+      s.lineup[slot] = null;
     }
 
     injury(s) {
@@ -998,6 +1161,7 @@
     // Simulação sem interface: lesões pendentes são resolvidas automaticamente.
     run() {
       while (!this.done) {
+        if (this.moment) this.resolveMoment(this.moment.best);
         if (this.pending) {
           const pd = this.pending;
           this.pending = null;
@@ -1068,6 +1232,9 @@
     team.focus = team.posture === 'defensivo' ? 'contra' : FB.FORMATIONS[o.formation].L === 0 ? 'lados' : pick(['misto', 'misto', 'lados', 'meio']);
     team.tempo = 'normal';
     team.passing = 'misto';
+    // Quem joga para se defender se fecha numa linha de cinco (ou com cinco no meio) sem a bola.
+    const f = FB.FORMATIONS[team.formation];
+    team.formationDef = team.posture === 'defensivo' && f.A >= 2 ? (team.squad.filter(id => state.players[id].pos === 'Z').length >= 3 ? '5-4-1' : '4-5-1') : null;
     // Clubes grandes poupam titulares no começo dos estaduais.
     const comp = state.comps[key];
     const rest = comp && comp.kind === 'estadual' && team.div === 0 && comp.md < 4;
@@ -1085,6 +1252,7 @@
     if (fo.L === 0) tips.push(`Eles jogam no ${o.formation}, sem laterais: atacar pelos lados é uma boa saída.`);
     if (fo.M > f.M) tips.push(`O ${o.formation} deles tem mais gente no meio (${fo.M} x ${f.M}). Evite o foco pelo meio ou reforce o setor.`);
     if (fo.A >= 3) tips.push('Eles atacam com três: cuidado com a linha adiantada.');
+    if (o.formationDef && o.formationDef !== o.formation) tips.push(`Sem a bola eles costumam se fechar no ${o.formationDef}. Paciência e jogo pelos lados ajudam a abrir a defesa.`);
     const tired = t.lineup.filter(id => id != null && state.players[id].en < 70).length;
     if (tired >= 3) tips.push(`${tired} titulares estão com menos de 70% de energia. Considere rodar o elenco ou usar ritmo cadenciado.`);
     const out = o.squad.map(id => state.players[id]).filter(p => p.inj && !p.inj.play).sort((a, b) => b.ovr - a.ovr);
@@ -1432,6 +1600,7 @@
     const p = state.players[pid];
     const me = state.teams[state.userId];
     const sal = FB.wageDemand(state, p, me.id);
+    if (p.loan) return { ok: false, msg: `${p.n} está emprestado e não pode ser negociado.` };
     if (me.squad.length >= FB.MAX_SQUAD) return { ok: false, msg: `Seu elenco já tem ${FB.MAX_SQUAD} jogadores.` };
     if (p.t == null) {
       const bonus = sal * 2;
@@ -1466,6 +1635,7 @@
   FB.release = (state, pid) => {
     const p = state.players[pid];
     const me = state.teams[state.userId];
+    if (p.loan) return { ok: false, msg: 'Jogador emprestado: use "Devolver" na ficha dele.' };
     if (me.squad.length <= FB.MIN_SQUAD) return { ok: false, msg: `Mínimo de ${FB.MIN_SQUAD} jogadores no elenco.` };
     const fine = p.sal * 3;
     me.squad = me.squad.filter(x => x !== pid);
@@ -1506,11 +1676,11 @@
       const mine = t.squad.map(id => state.players[id]).sort((a, b) => b.ovr - a.ovr);
       const bar = mine[10] ? mine[10].ovr : 0;
       const cands = Object.values(state.players).filter(x => x.t != null && x.t !== t.id && x.t !== state.userId &&
-        x.ovr > bar + 1 && x.ovr <= bar + 9 && x.age <= 30 && !x.inj && state.teams[x.t].squad.length > 22);
+        x.ovr > bar + 1 && x.ovr <= bar + 9 && x.age <= 30 && !x.inj && !x.loan && state.teams[x.t].squad.length > 22);
       if (!cands.length) return false;
       p = pick(cands);
     }
-    if (p.t == null || p.t === state.userId || p.t === t.id || state.teams[p.t].squad.length <= 22) return false;
+    if (p.t == null || p.loan || p.t === state.userId || p.t === t.id || state.teams[p.t].squad.length <= 22) return false;
     const fee = FB.askPrice(state, p);
     if (fee > budget) return false;
     const from = state.teams[p.t];
@@ -1546,10 +1716,10 @@
       const pending = new Set(state.inbox.filter(m => m.offer && !m.offer.done).map(m => m.offer.pid));
       for (const pid of me.squad) {
         const p = state.players[pid];
-        if (p.sale && !pending.has(pid) && Math.random() < 0.35) mkOffer(p, rf(0.75, 1.15));
+        if (p.sale && !p.loan && !pending.has(pid) && Math.random() < 0.35) mkOffer(p, rf(0.75, 1.15));
       }
       if (Math.random() < 0.08) {
-        const cands = me.squad.map(id => state.players[id]).filter(p => !p.sale && !pending.has(p.id) && p.ovr >= me.base);
+        const cands = me.squad.map(id => state.players[id]).filter(p => !p.sale && !p.loan && !pending.has(p.id) && p.ovr >= me.base);
         if (cands.length) mkOffer(pick(cands), rf(1.1, 1.5));
       }
       for (const r of (state.rumors || []).slice()) {
@@ -1593,6 +1763,145 @@
     return { ok: true };
   };
   FB.knowsPot = (state, p) => p.sc || p.t === state.userId;
+
+  // Relatório do olheiro: compara o jogador com o time titular do usuário e com o preço.
+  FB.scoutVerdict = (state, p) => {
+    const me = state.teams[state.userId];
+    const xi = me.squad.map(id => state.players[id]).filter(x => x.pos === p.pos).sort((a, b) => b.ovr - a.ovr);
+    const need = { G: 1, Z: 2, L: 2, M: 3, A: 2 }[p.pos];
+    const bar = xi[need - 1] ? xi[need - 1].ovr : 0;
+    const lines = [];
+    if (p.ovr >= bar + 3) lines.push(`Seria titular: supera os ${FB.POS_NAME[p.pos].toLowerCase()}s do elenco (referência ${bar}).`);
+    else if (p.ovr >= bar - 2) lines.push('Brigaria por posição com os titulares.');
+    else lines.push('Hoje seria reserva no seu time.');
+    if (p.age <= 21 && p.pot - p.ovr >= 8) lines.push(`Jovem com margem grande de evolução (potencial ${p.pot}).`);
+    else if (p.age >= 31) lines.push('Veterano: tende a cair de rendimento nas próximas temporadas.');
+    const price = FB.calcValue(p);
+    const worth = p.ovr >= bar + 3 || (p.age <= 21 && p.pot >= bar + 5);
+    const grade = worth && price <= FB.budgetLeft(state) ? 'Contratar' : worth ? 'Bom, mas caro' : p.ovr >= bar - 2 ? 'Opção de elenco' : 'Não recomendado';
+    return { grade, lines };
+  };
+
+  // Lista de observação.
+  FB.toggleWatch = (state, pid) => {
+    state.watch = state.watch || [];
+    const on = !state.watch.includes(pid);
+    state.watch = on ? [...state.watch, pid] : state.watch.filter(x => x !== pid);
+    return on;
+  };
+
+  // Busca de talentos: o olheiro procura pelos critérios e traz os melhores, já observados.
+  FB.SEARCH_COST = 80000;
+  FB.scoutSearch = (state, { pos, maxAge, young }) => {
+    const me = state.teams[state.userId];
+    if (me.cash < FB.SEARCH_COST) return { ok: false, msg: 'Caixa insuficiente para a busca do olheiro.' };
+    FB.money(state, me.id, -FB.SEARCH_COST, 'olheiros');
+    const pool = Object.values(state.players).filter(p => p.t !== me.id && !p.loan && (!pos || p.pos === pos) && p.age <= (maxAge || 40) &&
+      (p.t == null || state.teams[p.t].div !== 4 || p.ovr >= 60));
+    const score = p => (young ? p.pot * 1.2 + p.ovr * 0.3 : p.ovr + p.pot * 0.15) - FB.calcValue(p) / Math.max(1, me.cash) * 6;
+    const found = pool.sort((a, b) => score(b) - score(a)).slice(0, 6);
+    for (const p of found) { p.sc = true; if (!(state.watch || []).includes(p.id)) FB.toggleWatch(state, p.id); }
+    const lines = found.map(p => `• ${p.n} (${FB.POS_NAME[p.pos]}, ${p.age} anos) · ${p.t != null ? state.teams[p.t].name : 'sem clube'} · força ${p.ovr}, potencial ${p.pot}`);
+    FB.msg(state, 'Relatório do olheiro', `Encontrei estes nomes e coloquei na sua lista de observação:\n${lines.join('\n')}`, { from: 'Olheiro' });
+    return { ok: true, found };
+  };
+
+  // ---------- Empréstimos ----------
+  // Emprestado, o jogador vai para o elenco do outro clube até o fim da temporada.
+  // Quem fica com ele paga o salário combinado (loan.pay); na volta, o salário original é restaurado.
+
+  FB.MAX_LOANS = 5;
+  const moveTo = (state, p, tid) => {
+    const from = state.teams[p.t];
+    from.squad = from.squad.filter(x => x !== p.id);
+    from.lineup = from.lineup.map(x => (x === p.id ? null : x));
+    if (from.bench) from.bench = from.bench.filter(x => x !== p.id);
+    state.teams[tid].squad.push(p.id);
+    p.t = tid;
+    p.sale = false;
+  };
+
+  // Condições para pegar emprestado: titulares do outro clube não são emprestados.
+  FB.loanTerms = (state, p) => {
+    if (p.t == null || p.t === state.userId || p.loan) return null;
+    const owner = state.teams[p.t];
+    if (owner.div === 4 && p.ovr >= 62) return null;
+    if (FB.isKeyPlayer(state, p) && p.age > 21) return null;
+    if (owner.squad.length <= FB.MIN_SQUAD + 2) return null;
+    const share = p.age <= 21 ? 0.5 : 0.8; // o clube dono ajuda a pagar o salário
+    return { fee: Math.round(FB.calcValue(p) * 0.04 / 10000) * 10000, pay: Math.round(p.sal * share / 1000) * 1000, share };
+  };
+
+  FB.loanIn = (state, pid) => {
+    const p = state.players[pid];
+    const me = state.teams[state.userId];
+    const terms = FB.loanTerms(state, p);
+    if (!terms) return { ok: false, msg: `O ${p.t != null ? state.teams[p.t].name : 'clube'} não empresta ${p.n}.` };
+    if (!FB.windowOpen(state)) return { ok: false, msg: `Janela fechada. ${FB.windowText(state)}.` };
+    if (me.squad.length >= FB.MAX_SQUAD) return { ok: false, msg: `Seu elenco já tem ${FB.MAX_SQUAD} jogadores.` };
+    if (me.squad.filter(id => state.players[id].loan).length >= FB.MAX_LOANS) return { ok: false, msg: `Limite de ${FB.MAX_LOANS} emprestados no elenco.` };
+    if (me.cash < terms.fee) return { ok: false, msg: 'Caixa insuficiente para a taxa de empréstimo.' };
+    const ap = FB.boardApproves(state, terms.fee, terms.pay);
+    if (!ap.ok) return ap;
+    const owner = state.teams[p.t];
+    FB.money(state, me.id, -terms.fee, 'compras');
+    FB.money(state, owner.id, terms.fee, 'vendas');
+    FB.boardSpend(state, terms.fee);
+    p.loan = { from: owner.id, to: me.id, until: state.season, sal: p.sal };
+    p.sal = terms.pay;
+    moveTo(state, p, me.id);
+    p.mo = clamp(p.mo + 8, 10, 100);
+    FB.msg(state, 'Empréstimo fechado', `${p.n} chega emprestado pelo ${owner.name} até o fim de ${state.season}. Salário: ${FB.fmtMoney(terms.pay)}/mês.`, { from: 'Mercado' });
+    FB.news(state, 'mercado', `${me.name} acerta empréstimo de ${p.n}`, `${p.n}, do ${owner.name}, vai defender o ${me.name} até o fim da temporada.`, { team: me.id });
+    return { ok: true };
+  };
+
+  // Clubes interessados num jogador do usuário: de divisão igual ou menor e com vaga no elenco.
+  FB.loanSuitors = (state, pid) => {
+    const p = state.players[pid];
+    const me = state.teams[state.userId];
+    const cands = state.teams.filter(t => t.id !== me.id && t.div <= 3 && t.div >= me.div && t.squad.length < FB.MAX_SQUAD - 4 &&
+      FB.teamStrength(state, t) <= p.ovr + 6);
+    return shuffle(cands).slice(0, 3).map(t => t.id);
+  };
+
+  FB.loanOut = (state, pid, tid) => {
+    const p = state.players[pid];
+    const me = state.teams[state.userId];
+    if (p.t !== me.id || p.loan) return { ok: false, msg: 'Jogador indisponível para empréstimo.' };
+    if (!FB.windowOpen(state)) return { ok: false, msg: `Janela fechada. ${FB.windowText(state)}.` };
+    if (me.squad.length <= FB.MIN_SQUAD) return { ok: false, msg: `Mínimo de ${FB.MIN_SQUAD} jogadores no elenco.` };
+    const to = state.teams[tid];
+    p.loan = { from: me.id, to: tid, until: state.season, sal: p.sal };
+    moveTo(state, p, tid); // o clube que recebe paga o salário integral
+    FB.msg(state, 'Jogador emprestado', `${p.n} foi emprestado ao ${to.name} até o fim de ${state.season}. O salário fica por conta deles.`, { from: 'Mercado' });
+    return { ok: true };
+  };
+
+  // Devolve antes do prazo um jogador que o usuário pegou emprestado.
+  FB.loanReturn = (state, pid) => {
+    const p = state.players[pid];
+    if (!p.loan || p.loan.to !== state.userId) return { ok: false, msg: 'Jogador não está emprestado ao seu clube.' };
+    const back = state.teams[p.loan.from];
+    p.sal = p.loan.sal;
+    moveTo(state, p, back.id);
+    p.loan = null;
+    return { ok: true, msg: `${p.n} voltou ao ${back.name}.` };
+  };
+
+  // Na virada da temporada, todos os emprestados voltam aos seus clubes.
+  FB.endLoans = state => {
+    const back = [];
+    for (const p of Object.values(state.players)) {
+      if (!p.loan) continue;
+      const { from, to } = p.loan;
+      p.sal = p.loan.sal;
+      if (p.t === to && state.teams[from]) moveTo(state, p, from);
+      if (from === state.userId || to === state.userId) back.push(p.n);
+      p.loan = null;
+    }
+    return back;
+  };
   FB.potLabel = pot => (pot >= 85 ? 'Craque' : pot >= 75 ? 'Muito alto' : pot >= 66 ? 'Alto' : pot >= 57 ? 'Médio' : 'Baixo');
   FB.avgRating = p => (p.j ? (p.rs || 0) / p.j : null);
 
@@ -1656,6 +1965,7 @@
 
     state.history.unshift({ season: state.season, team: user.id, div: summary.userDiv, pos: summary.userPos, titles: summary.champions.filter(c => c.tid === user.id).map(c => c.comp) });
 
+    summary.loans = FB.endLoans(state);
     FB.developPlayers(state, summary);
     for (const t of shuffle(T.filter(t => t.id !== state.userId && t.div !== 4))) for (let k = 0; k < 3; k++) FB.aiBuy(state, t);
 

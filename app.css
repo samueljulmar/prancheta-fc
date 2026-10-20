@@ -406,3 +406,8 @@ p.pre { white-space: pre-line; }
 .goal { display: flex; align-items: center; gap: 12px; padding: 7px 0; }
 .goal-ico { font-size: 20px; width: 28px; text-align: center; flex: 0 0 auto; }
 @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+/* ---------- Lances decisivos ---------- */
+.moment-head { display: flex; justify-content: space-between; align-items: center; font-size: 19px; font-weight: 800; color: var(--gold); }
+.moment-head.def { color: var(--red); }
+.moment-head span { font-size: 14px; color: var(--muted); font-weight: 700; }

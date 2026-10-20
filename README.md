@@ -43,6 +43,27 @@ começo do Brasileirão e em julho; jogadores livres podem ser contratados a qua
 - Navegação: *Painel, Elenco, Mensagens, Mercado* e *Mais* (calendário, notícias, tática, treino, médico, finanças,
   estádio, diretoria, competições, sala de troféus, carreira e configurações).
 
+## Tática com e sem bola
+
+Além da formação de quando o time ataca, dá para escolher uma forma **sem a bola** (por exemplo, 4-3-3 atacando e
+5-4-1 defendendo). A defesa fica mais fechada, mas a transição custa um pouco de controle do meio e de ataque.
+Os adversários mais fracos também se fecham assim, e o foco pelos lados/meio é comparado com a forma defensiva deles.
+
+## Lances decisivos
+
+Em alguns lances de perigo o jogo para e você escolhe a jogada: **contra-ataque** (chutar, driblar o goleiro ou tocar),
+**falta** (direto, cruzar ou jogada ensaiada), **pênalti** (canto ou meio) e **defesa** (fazer a falta, dar o bote ou
+recuar). A descrição da situação dá a pista da melhor escolha; o resultado ainda depende da qualidade dos jogadores.
+Dá para desligar em *Mais → Configurações*.
+
+## Olheiros e empréstimos
+
+- **Lista de observação** (☆ Observar na ficha) e **relatório do olheiro** com recomendação: contratar, bom mas caro,
+  opção de elenco ou não recomendado.
+- **Buscar talentos**: o olheiro procura por posição e perfil (pronto para jogar ou jovens até 21) e traz os 6 melhores.
+- **Empréstimos** até o fim da temporada: pegue jogadores que não são titulares em outros clubes (o dono ajuda a pagar o
+  salário) e empreste os seus para ganharem minutos. Todos voltam na virada do ano.
+
 ## Antes de cada jogo
 
 Ao tocar em **Jogar**, abre a tela de pré-jogo:
@@ -98,22 +119,37 @@ para a Série D e 53 clubes sul-americanos (com cores, cidade, estádio e torcid
 64 clubes, então aqui ela é uma versão reduzida. Também há o modo **clubes fictícios**.
 
 **Jogadores:** os elencos vêm gerados. Para usar jogadores reais, na tela de escolha do clube toque em
-**Importar elencos reais**. Durante a carreira, use *Clube → Dados → Atualizar elencos*. O jogo aceita:
+**Importar elencos reais**. Durante a carreira, use *Mais → Configurações → Atualizar elencos*. O jogo aceita:
 
 1. **Sua planilha** `jogadores.csv` (separada por `;` ou `,`):
    `nome; clube; posicao; idade; forca; potencial; valor; salario`
    - `clube`: nome ou sigla (Flamengo, FLA, "CR Flamengo"…); vazio ou `livre` = sem clube.
    - `posicao`: G, Z, L, M, A ou por extenso ("goleiro", "volante", "ponta", "ST", "CB"…).
-   - Sem `forca`, ela é calculada pelo `valor` de mercado ("R$ 12,5 mi", "€ 3m", "800 mil").
+   - Sem `forca` e `potencial`, eles são calculados pelo `valor` de mercado ("R$ 12,5 mi", "€ 3m", "800 mil") e pela idade.
 2. **players.csv do projeto [transfermarkt-datasets](https://github.com/dcaribou/transfermarkt-datasets)**,
-   uma base aberta (licença CC0) também publicada no Kaggle. O jogo liga cada jogador ao clube pelo nome
-   do clube atual, converte o valor em euros (× 6) em força e ignora quem não joga há mais de uma temporada.
-   Clubes que não estiverem nessa base (boa parte das Séries B, C e D) continuam com elenco gerado.
+   uma base aberta (licença CC0) também publicada no Kaggle.
 3. **clubes.csv**: `nome; sigla; cidade; cor1; cor2; divisao; capacidade; torcida; caixa; titulos` para
    corrigir dados dos clubes. Antes de começar a carreira, também dá para mudar as divisões, desde que o total
    continue 20/20/20/32.
 
-Em *Clube → Dados → Exportar base (CSV)* você baixa a base atual no mesmo formato, para editar e reimportar.
+Em *Mais → Configurações → Exportar base (CSV)* você baixa a base atual no mesmo formato, para editar e reimportar.
+
+### Gerador de elencos reais
+
+`tools/gerar-elencos.js` monta o `jogadores.csv` a partir do transfermarkt-datasets, com força e potencial calculados por:
+
+- **Força:** valor de mercado e idade (jovens valem mais pelo que podem ser; veteranos perdem valor mais rápido que
+  qualidade), com ajuste pelos minutos jogados nos últimos 12 meses.
+- **Potencial:** margem pela idade (até 18 anos, ~14 pontos; aos 25, ~1), mais a tendência do valor no último ano,
+  o valor máximo da carreira e se o jovem já é titular. O cálculo é determinístico: o mesmo jogador sempre recebe a mesma nota.
+
+Pelo celular: no GitHub, abra **Actions → Gerar elencos reais → Run workflow**. Ao terminar, baixe o artefato
+`elencos-reais` (zip com `jogadores.csv` e `relatorio.txt`), descompacte no app Arquivos e importe o `jogadores.csv` no jogo.
+O relatório mostra quantos clubes de cada divisão ganharam elenco real. No computador:
+`node tools/gerar-elencos.js <pasta-com-os-csv> <pasta-de-saida>`.
+
+O arquivo gerado tem nomes de pessoas reais e **não é commitado** no repositório.
+
 Nomes, escudos e marcas de clubes e jogadores reais pertencem aos donos. Use bases reais só para uso pessoal.
 
 ## Arquivos
@@ -126,6 +162,7 @@ Nomes, escudos e marcas de clubes e jogadores reais pertencem aos donos. Use bas
 | `board.js` | Metas da diretoria, orçamento, teto salarial, e-mails e contrato do treinador |
 | `medical.js` | Lesões, tratamentos e recuperação |
 | `news.js` | Feed de notícias |
-| `importer.js` | Importação e exportação de base (CSV/JSON, transfermarkt-datasets) |
+| `importer.js` | Importação e exportação de base (CSV/JSON, transfermarkt-datasets) e fórmula de força/potencial |
+| `tools/gerar-elencos.js` | Gerador do arquivo de elencos reais (roda no GitHub Actions ou no computador) |
 | `ui.js`, `app.css` | Interface mobile |
 | `sw.js`, `manifest.json` | PWA e modo offline |

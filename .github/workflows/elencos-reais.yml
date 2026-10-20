@@ -1,0 +1,39 @@
+name: Gerar elencos reais
+
+# Baixa o transfermarkt-datasets (licença CC0), calcula força e potencial e entrega jogadores.csv
+# como artefato da execução. O arquivo não é commitado: ele tem nomes de pessoas reais.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gerar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Baixar a base
+        run: |
+          mkdir -p dados
+          base=https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data
+          curl -fsSL --retry 3 -o dados/players.csv.gz "$base/players.csv.gz"
+          curl -fsSL --retry 3 -o dados/player_valuations.csv.gz "$base/player_valuations.csv.gz" || echo "sem histórico de valores"
+          curl -fsSL --retry 3 -o dados/appearances.csv.gz "$base/appearances.csv.gz" || echo "sem minutos jogados"
+          ls -la dados
+
+      - name: Gerar jogadores.csv
+        run: |
+          node tools/gerar-elencos.js dados saida
+          { echo '```'; cat saida/relatorio.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elencos-reais
+          path: saida/
+          retention-days: 7

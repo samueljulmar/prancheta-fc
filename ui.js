@@ -36,10 +36,11 @@
     if (p.inj) s += `<span class="tag red">${p.inj.play ? '💉' : '🩹'} ${FB.fmtDays(daysLeft(p))}</span>`;
     if (susTotal(p)) s += `<span class="tag red">🟥 susp.</span>`;
     if (p.sale) s += `<span class="tag gold">À venda</span>`;
+    if (p.loan) s += `<span class="tag blue">${p.loan.from === S.userId ? 'Emprestado' : 'Por empréstimo'}</span>`;
     return s ? `<span class="tags">${s}</span>` : '';
   };
   const rerender = () => { if (ui.pre) renderPrematch(); else render(); };
-  const SENDER_ICON = { Diretoria: '🏛️', 'Departamento médico': '🩺', 'Auxiliar técnico': '📋', Mercado: '💼', Torcida: '📣', Clube: '✉️' };
+  const SENDER_ICON = { Diretoria: '🏛️', 'Departamento médico': '🩺', 'Auxiliar técnico': '📋', Mercado: '💼', Torcida: '📣', Olheiro: '🔭', Clube: '✉️' };
   const tacSeg = (team, k, label, opts, act = 'tac') => `
     <div class="tac-row"><span class="muted small">${label}</span>
       <div class="seg" style="margin:0">${Object.entries(opts).map(([v, l]) => `<button class="${FB.tac(team, k) === v ? 'on' : ''}" data-act="${act}" data-k="${k}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
@@ -47,6 +48,10 @@
     tacSeg(team, 'posture', 'Postura', FB.POSTURES, act) +
     tacSeg(team, 'press', 'Pressão', { baixa: 'Baixa', media: 'Média', alta: 'Alta' }, act) +
     Object.entries(FB.TACTICS).map(([k, d]) => tacSeg(team, k, d.label, d.opts, act)).join('');
+  // Formação sem a bola ("Igual" usa a mesma de quando o time ataca).
+  const defSeg = (cur, att, act) => `<p class="muted small" style="margin:10px 0 6px">Sem a bola</p>
+    <div class="seg">${[['', 'Igual'], ...Object.keys(FB.FORMATIONS).filter(f => f !== att).map(f => [f, f])].map(([v, l]) =>
+      `<button class="${(cur && cur !== att ? cur : '') === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('')}</div>`;
   const formHtml = list => `<span class="form">${list.map(f => `<i class="${f}">${f}</i>`).join('')}</span>`;
 
   function toast(text, ms = 2600) {
@@ -575,7 +580,9 @@
     const issues = t.lineup.filter(id => id == null || !FB.available(P(id), key) || P(id).inj).length;
     return `
       <div class="card" style="padding:12px">
+        <p class="muted small" style="margin:0 0 6px">Com a bola</p>
         <div class="seg">${Object.keys(FB.FORMATIONS).map(fm => `<button class="${t.formation === fm ? 'on' : ''}" data-act="formation" data-v="${fm}">${fm}</button>`).join('')}</div>
+        ${defSeg(t.formationDef, t.formation, 'formation-def')}
         <p class="muted small" style="margin:0">Postura, pressão, ritmo e demais instruções ficam na aba <b>Tática</b>.</p>
       </div>
       ${issues ? `<div class="card small" style="border-color:var(--orange)">⚠️ ${issues} posição(ões) com jogador lesionado, suspenso${key ? ' na ' + esc(S.comps[key].short) : ''} ou vazia. Toque para trocar ou use <b>Escalar automaticamente</b>.</div>` : ''}
@@ -714,10 +721,18 @@
     const avg = FB.avgRating(p);
     const sus = Object.entries(p.sus || {}).filter(([, n]) => n > 0).map(([k, n]) => `${n} jogo(s) na ${S.comps[k] ? S.comps[k].short : k}`);
     let actions = '';
-    if (mine) {
+    const loanFromMe = p.loan && p.loan.from === S.userId;
+    const loanTag = p.loan ? `<p class="small" style="margin:0 0 10px"><span class="tag blue">Empréstimo</span> ${loanFromMe
+      ? `Emprestado ao ${esc(T(p.loan.to).name)} até o fim de ${p.loan.until}.` : `Do ${esc(T(p.loan.from).name)} até o fim de ${p.loan.until}.`}</p>` : '';
+    if (mine && p.loan) {
+      actions = `<button class="btn block" data-act="loan-return" data-id="${p.id}">Devolver ao ${esc(T(p.loan.from).name)}</button>`;
+    } else if (mine) {
       actions = `<div class="btns">
         <button class="btn" data-act="toggle-sale" data-id="${p.id}">${p.sale ? 'Tirar da lista de venda' : 'Colocar à venda'}</button>
-        <button class="btn danger" data-act="release" data-id="${p.id}">Dispensar</button></div>`;
+        <button class="btn danger" data-act="release" data-id="${p.id}">Dispensar</button></div>
+        <button class="btn block" style="margin-top:8px" data-act="loan-out-open" data-id="${p.id}">↗ Emprestar</button>`;
+    } else if (loanFromMe) {
+      actions = '';
     } else if (!S.fired) {
       const sal = FB.wageDemand(S, p, S.userId);
       if (!team) {
@@ -731,7 +746,18 @@
           <div class="btns">${opts.map(v => `<button class="btn sm" data-act="bid" data-id="${p.id}" data-v="${v}" ${v > me().cash ? 'disabled' : ''}>${money(v)}</button>`).join('')}</div>
           ${ui.counter && ui.counter.pid === p.id ? `<button class="btn primary block" style="margin-top:8px" data-act="bid" data-id="${p.id}" data-v="${ui.counter.v}" ${ui.counter.v > me().cash ? 'disabled' : ''}>Pagar o pedido: ${money(ui.counter.v)}</button>` : ''}`;
       }
+      const terms = team && FB.loanTerms(S, p);
+      if (terms && FB.windowOpen(S)) actions += `<button class="btn block" style="margin-top:8px" data-act="loan-in" data-id="${p.id}">↙ Pedir emprestado · taxa ${money(terms.fee)}, salário ${money(terms.pay)}/mês</button>`;
       if (!knows) actions += `<button class="btn block" style="margin-top:8px" data-act="scout" data-id="${p.id}">🔎 Enviar olheiro (${money(FB.SCOUT_COST)})</button>`;
+      const watched = (S.watch || []).includes(p.id);
+      actions += `<button class="btn block ${watched ? 'primary' : ''}" style="margin-top:8px" data-act="watch" data-id="${p.id}">${watched ? '★ Na lista de observação' : '☆ Observar'}</button>`;
+    }
+    let report = '';
+    if (!mine && !loanFromMe && FB.knowsPot(S, p) && !S.fired) {
+      const v = FB.scoutVerdict(S, p);
+      const cls = { Contratar: 'green', 'Bom, mas caro': 'gold', 'Opção de elenco': 'blue' }[v.grade] || 'red';
+      report = `<div class="card"><h3>🔭 Relatório do olheiro</h3><p style="margin:0 0 6px"><span class="tag ${cls}">${v.grade}</span></p>
+        ${v.lines.map(l => `<p class="small" style="margin:3px 0">• ${esc(l)}</p>`).join('')}</div>`;
     }
     const goalsBy = Object.entries(p.gl || {}).filter(([, g]) => g).map(([k, g]) => `${g} ${S.comps[k] ? S.comps[k].short : k}`).join(' · ');
     return `
@@ -742,6 +768,7 @@
         <p class="small" style="margin:0 0 8px">${p.inj.play ? 'Atuando no sacrifício' : `Previsão de retorno: <b>${date(p.inj.until)}</b> (${FB.fmtDays(daysLeft(p))})`}${p.inj.chosen ? ' · ' + esc(FB.TREATMENTS[p.inj.treat].name) : ''}</p>
         ${mine ? treatmentHtml(p) : ''}</div>` : ''}
       ${sus.length ? `<p class="small pos-red" style="margin:0 0 10px">🟥 Suspenso: ${esc(sus.join(', '))}</p>` : ''}
+      ${loanTag}
       <div class="stat-grid" style="margin-bottom:14px">
         <div class="stat"><small>Potencial</small><b>${knows ? p.pot : '?'}</b> <span class="small muted">${knows ? FB.potLabel(p.pot) : 'Observe para saber'}</span></div>
         <div class="stat"><small>Valor de mercado</small><b>${money(value)}</b></div>
@@ -752,7 +779,7 @@
         <div class="stat"><small>Nota média</small><b>${avg ? avg.toFixed(1) : '–'}</b> <span class="small muted">${p.lastRt ? 'última ' + p.lastRt.toFixed(1) : ''}</span></div>
         <div class="stat"><small>Gols por competição</small><span class="small">${esc(goalsBy) || '–'}</span></div>
       </div>
-      ${actions}`;
+      ${report}${actions}`;
   }
 
   // ---------- Jogos (competições) ----------
@@ -898,8 +925,18 @@
     const m = ui.mkt;
     const t = me();
     let html = `<div class="card small row between" style="padding:10px 14px"><span>${FB.windowOpen(S) ? '🟢' : '🔒'} ${FB.windowText(S)}</span><span class="muted">Livres: sempre</span></div>
-      <div class="seg fill">${[['transf', 'Transferências'], ['livres', 'Livres'], ['venda', 'À venda']].map(([k, l]) =>
+      <div class="seg">${[['transf', 'Transferências'], ['livres', 'Livres'], ['emprestimo', 'Empréstimos'], ['observados', '★ Observados'], ['venda', 'À venda']].map(([k, l]) =>
       `<button class="${m.mode === k ? 'on' : ''}" data-act="mkt-mode" data-v="${k}">${l}</button>`).join('')}</div>`;
+    if (m.mode === 'observados') {
+      const list = (S.watch || []).map(P).filter(p => p && p.t !== S.userId);
+      return html + `<button class="btn primary block" style="margin-bottom:12px" data-act="search-open">🔭 Buscar talentos (${money(FB.SEARCH_COST)})</button>` +
+        (list.length ? `<div class="list">${list.map(p => playerRow(p, { team: true, noEn: true, price: p.t == null ? FB.wageDemand(S, p, S.userId) * 2 : FB.calcValue(p) })).join('')}</div>`
+          : `<div class="empty">Nenhum jogador observado.<br>Toque em ☆ Observar na ficha de um jogador ou peça uma busca ao olheiro.</div>`);
+    }
+    if (m.mode === 'emprestimo') {
+      const mineLoans = Object.values(S.players).filter(p => p.loan && (p.loan.from === S.userId || p.loan.to === S.userId));
+      html += mineLoans.length ? `<div class="card" style="padding:0"><h3 style="padding:14px 14px 0">Seus empréstimos</h3><div class="list" style="margin:0">${mineLoans.map(p => playerRow(p, { team: true, noEn: true })).join('')}</div></div>` : '';
+    }
     if (m.mode === 'venda') {
       const list = t.squad.map(P).filter(p => p.sale);
       return html + (list.length ? `<div class="list">${list.map(p => playerRow(p, { price: FB.calcValue(p) })).join('')}</div>`
@@ -914,15 +951,16 @@
     const q = FB.norm(m.q);
     let pool;
     if (m.mode === 'livres') pool = S.free.map(P);
-    else pool = Object.values(S.players).filter(p => p.t != null && p.t !== S.userId && T(p.t).div !== 4);
+    else if (m.mode === 'emprestimo') pool = Object.values(S.players).filter(p => p.t != null && p.t !== S.userId && FB.loanTerms(S, p));
+    else pool = Object.values(S.players).filter(p => p.t != null && p.t !== S.userId && T(p.t).div !== 4 && !p.loan);
     pool = pool.filter(p => (!m.pos || p.pos === m.pos) &&
       (!q || FB.norm(p.n).includes(q) || (p.t != null && (FB.norm(T(p.t).name).includes(q) || T(p.t).short.toLowerCase() === q))));
-    const price = p => (p.t == null ? FB.wageDemand(S, p, S.userId) * 2 : FB.calcValue(p));
+    const price = p => (p.t == null ? FB.wageDemand(S, p, S.userId) * 2 : m.mode === 'emprestimo' ? FB.loanTerms(S, p).fee : FB.calcValue(p));
     if (m.afford) pool = pool.filter(p => price(p) <= t.cash);
     pool.sort((a, b) => b.ovr - a.ovr || a.age - b.age);
     const shown = pool.slice(0, 80);
     return html + (shown.length
-      ? `<p class="muted small" style="margin:0 2px 8px">${pool.length} jogador(es)${pool.length > 80 ? ' · mostrando 80' : ''}${m.mode === 'livres' ? ' · preço = luvas' : ''}</p>
+      ? `<p class="muted small" style="margin:0 2px 8px">${pool.length} jogador(es)${pool.length > 80 ? ' · mostrando 80' : ''}${m.mode === 'livres' ? ' · preço = luvas' : m.mode === 'emprestimo' ? ' · preço = taxa de empréstimo' : ''}</p>
          <div class="list">${shown.map(p => playerRow(p, { team: true, noEn: true, price: price(p) })).join('')}</div>`
       : '<div class="empty">Nenhum jogador encontrado.</div>');
   }
@@ -1002,6 +1040,9 @@
           <div class="seg" style="margin:0">${[1, 2, 4].map(v => `<button class="${S.settings.speed === v ? 'on' : ''}" data-act="speed-default" data-v="${v}">${v}x</button>`).join('')}</div></div>
         <div class="row between" style="margin-top:8px"><span>Pausar no intervalo</span>
           <button class="btn sm ${S.settings.htPause ? 'primary' : ''}" data-act="ht-toggle">${S.settings.htPause ? 'Sim' : 'Não'}</button></div>
+        <div class="row between" style="margin-top:8px"><span>Lances decisivos</span>
+          <button class="btn sm ${S.settings.moments !== false ? 'primary' : ''}" data-act="moments-toggle">${S.settings.moments !== false ? 'Sim' : 'Não'}</button></div>
+        <p class="muted small" style="margin:6px 0 0">Nos lances decisivos o jogo para e você escolhe a jogada: contra-ataque, falta, pênalti ou defesa.</p>
       </div>
       <div class="card"><h3>Dados</h3>
         <div class="btns" style="margin-bottom:8px">
@@ -1101,7 +1142,9 @@
     let body = '';
     if (pre.tab === 'adv') body = prematchOpp(t, opp, f);
     else if (pre.tab === 'escalacao') body = prematchLineup(t, f);
-    else if (pre.tab === 'tatica') body = `<div class="card"><h3>Formação</h3><div class="seg">${Object.keys(FB.FORMATIONS).map(fm => `<button class="${t.formation === fm ? 'on' : ''}" data-act="formation" data-v="${fm}">${fm}</button>`).join('')}</div></div>
+    else if (pre.tab === 'tatica') body = `<div class="card"><h3>Formação</h3><p class="muted small" style="margin:0 0 6px">Com a bola</p><div class="seg">${Object.keys(FB.FORMATIONS).map(fm => `<button class="${t.formation === fm ? 'on' : ''}" data-act="formation" data-v="${fm}">${fm}</button>`).join('')}</div>
+      ${defSeg(t.formationDef, t.formation, 'formation-def')}
+      <p class="muted small" style="margin:0">Uma forma diferente sem a bola fecha melhor a defesa, mas a transição custa um pouco de controle do meio.</p></div>
       <div class="card"><h3>Estratégia para o jogo</h3>${tacticsHtml(t)}</div>
       <div class="card"><h3>Auxiliar técnico</h3>${FB.scoutReport(S, t.id, opp.id).map(x => `<p class="small" style="margin:4px 0">• ${esc(x)}</p>`).join('')}</div>`;
     else body = `<p class="muted small" style="margin:0 2px 10px">O que você diz ao elenco antes de entrar em campo?</p>
@@ -1166,6 +1209,7 @@
     const day = FB.startDate(S, { manual: true });
     if (!day.userMatch) { showRoundResults(FB.finishDate(S, day)); return; }
     ui.live = { day, m: day.userMatch, speed: S.settings.speed, paused: false, shown: 0, timer: null };
+    day.userMatch.interactive = S.settings.moments !== false;
     if (talk && talk !== 'nenhuma') day.userMatch.preTalk(day.userMatch.user, talk);
     renderLive();
     if (day.notes.length) toast(day.notes.join(' · '), 4500);
@@ -1245,6 +1289,7 @@
     if (!L) return;
     clearTimeout(L.timer);
     if (L.m.pending) { openForcedSub(); return; }
+    if (L.m.moment) { openMoment(); return; }
     if (L.paused || L.m.done) { updateLive(); return; }
     if (L.speed === 'end') {
       while (!L.m.done) {
@@ -1267,6 +1312,7 @@
     const L = ui.live;
     const m = L.m;
     if (m.pending) { updateLive(); openForcedSub(); return true; }
+    if (m.moment) { updateLive(); openMoment(); return true; }
     if (m.events.slice(before).some(e => e.type === 'ht') && S.settings.htPause) {
       L.paused = true;
       updateLive();
@@ -1274,6 +1320,18 @@
       return true;
     }
     return false;
+  }
+
+  function openMoment() {
+    const m = ui.live.m;
+    const M = m.moment;
+    if (!M) return;
+    const D = FB.MOMENTS[M.kind];
+    const mine = M.side === m.user;
+    openSheet(() => `<div class="moment-head ${mine ? '' : 'def'}">⚡ ${D.title} <span>${M.m}'</span></div>
+      <p style="margin:6px 0 12px">${esc(M.text)}</p>
+      <div class="list">${Object.entries(D.opts).filter(([k]) => k !== 'tocar' || M.mate != null).map(([k, [label, desc]]) => `
+        <button class="item" data-act="moment" data-v="${k}"><div class="grow"><div class="name">${label}</div><div class="meta">${desc}</div></div></button>`).join('')}</div>`, { modal: true });
   }
 
   // Lesão: o jogo só volta depois da substituição.
@@ -1344,6 +1402,7 @@
       return `<h2>Tática</h2>
         <p class="muted small" style="margin:8px 0 6px">Formação</p>
         <div class="seg">${Object.keys(FB.FORMATIONS).map(f => `<button class="${s.formation === f ? 'on' : ''}" data-act="live-formation" data-v="${f}">${f}</button>`).join('')}</div>
+        ${defSeg(s.formationDef, s.formation, 'live-formation-def')}
         <p class="muted small" style="margin:8px 0 6px">Postura</p>
         <div class="seg fill">${Object.entries(FB.POSTURES).map(([k, l]) => `<button class="${s.posture === k ? 'on' : ''}" data-act="live-posture" data-v="${k}">${l}</button>`).join('')}</div>
         <p class="muted small" style="margin:8px 0 6px">Pressão</p>
@@ -1541,7 +1600,8 @@
     elenco: d => { ui.elenco = d.v; render(); },
     sort: d => { ui.sort = d.v; render(); },
     player: d => openPlayer(+d.id),
-    formation: d => { FB.reassign(S, me(), d.v); FB.save(S); rerender(); },
+    formation: d => { const t = me(); FB.reassign(S, t, d.v); if (t.formationDef === d.v) t.formationDef = null; FB.save(S); rerender(); },
+    'formation-def': d => { me().formationDef = d.v || null; FB.save(S); rerender(); },
     training: d => { me().training = d.v; FB.save(S); render(); toast(`Treino: ${FB.TRAININGS[d.v].name}`); },
     'auto-lineup': d => {
       const t = me();
@@ -1613,6 +1673,51 @@
     'comp-round': d => { ui.compRound = +d.v; render(); },
 
     'mkt-mode': d => { ui.mkt.mode = d.v; render(); },
+    watch: d => { const on = FB.toggleWatch(S, +d.id); FB.save(S); refreshSheet(); render(); toast(on ? 'Adicionado à lista de observação.' : 'Removido da lista.'); },
+    'search-open': () => {
+      ui.search = ui.search || { pos: '', young: false };
+      openSheet(() => `<h2>Buscar talentos</h2>
+        <p class="muted small">O olheiro procura em todas as divisões e no exterior, e os 6 melhores entram na sua lista já com relatório.</p>
+        <p class="muted small" style="margin:10px 0 6px">Posição</p>
+        <div class="seg">${[['', 'Qualquer'], ...FB.POS.map(p => [p, FB.POS_NAME[p]])].map(([k, l]) => `<button class="${ui.search.pos === k ? 'on' : ''}" data-act="search-pos" data-v="${k}">${l}</button>`).join('')}</div>
+        <p class="muted small" style="margin:10px 0 6px">Perfil</p>
+        <div class="seg fill"><button class="${!ui.search.young ? 'on' : ''}" data-act="search-young" data-v="">Pronto para jogar</button>
+          <button class="${ui.search.young ? 'on' : ''}" data-act="search-young" data-v="1">Jovens (até 21)</button></div>
+        <button class="btn primary block" data-act="search-go" ${me().cash < FB.SEARCH_COST ? 'disabled' : ''}>Enviar o olheiro · ${money(FB.SEARCH_COST)}</button>`);
+    },
+    'search-pos': d => { ui.search.pos = d.v; refreshSheet(); },
+    'search-young': d => { ui.search.young = !!d.v; refreshSheet(); },
+    'search-go': () => {
+      const r = FB.scoutSearch(S, { pos: ui.search.pos, young: ui.search.young, maxAge: ui.search.young ? 21 : 40 });
+      if (!r.ok) { toast(r.msg); return; }
+      FB.save(S); closeSheet(); ui.mkt.mode = 'observados'; render(); toast(`O olheiro encontrou ${r.found.length} jogador(es).`);
+    },
+    'loan-in': d => {
+      const p = P(+d.id);
+      const terms = FB.loanTerms(S, p);
+      if (!terms) { toast('Empréstimo indisponível.'); return; }
+      confirmSheet('Pedir emprestado', `${p.n} até o fim de ${S.season}. Taxa de ${money(terms.fee)} e salário de ${money(terms.pay)}/mês (o ${T(p.t).name} paga o resto).`, 'Fechar empréstimo', () => {
+        const r = FB.loanIn(S, p.id);
+        if (r.ok) { FB.save(S); render(); toast(`${p.n} chegou por empréstimo!`); } else toast(r.msg, 3500);
+      });
+    },
+    'loan-out-open': d => {
+      const p = P(+d.id);
+      if (!FB.windowOpen(S)) { toast(`Janela fechada. ${FB.windowText(S)}.`); return; }
+      const clubs = FB.loanSuitors(S, p.id);
+      openSheet(() => `<h2>Emprestar ${esc(p.n)}</h2>
+        <p class="muted small">Até o fim de ${S.season}. O clube que recebe paga o salário inteiro, e ele ganha minutos para evoluir.</p>
+        <div class="list">${clubs.map(id => `<button class="item" data-act="loan-out" data-id="${p.id}" data-v="${id}">${badge(T(id))}
+          <div class="grow"><div class="name ellipsis">${esc(T(id).name)}</div><div class="meta">${FB.DIV_NAMES[T(id).div]}</div></div>
+          <span class="btn sm">Emprestar</span></button>`).join('') || '<div class="empty">Nenhum clube interessado agora.</div>'}</div>
+        <button class="btn block" data-act="close">Cancelar</button>`);
+    },
+    'loan-out': d => {
+      const r = FB.loanOut(S, +d.id, +d.v);
+      if (!r.ok) { toast(r.msg); return; }
+      FB.save(S); closeSheet(); render(); toast('Empréstimo fechado.');
+    },
+    'loan-return': d => { const r = FB.loanReturn(S, +d.id); if (r.ok) { FB.save(S); closeSheet(); render(); } toast(r.msg); },
     'mkt-pos': d => { ui.mkt.pos = d.v; render(); },
     'mkt-afford': () => { ui.mkt.afford = !ui.mkt.afford; render(); },
 
@@ -1625,6 +1730,7 @@
     }),
     'speed-default': d => { S.settings.speed = +d.v; FB.save(S); render(); },
     'ht-toggle': () => { S.settings.htPause = !S.settings.htPause; FB.save(S); render(); },
+    'moments-toggle': () => { S.settings.moments = S.settings.moments === false; FB.save(S); render(); },
 
     // Partida
     'live-pause': () => { const L = ui.live; L.paused = !L.paused; tickLoop(); updateLive(); },
@@ -1661,6 +1767,7 @@
     'live-formation': d => {
       const m = ui.live.m;
       const s = m.sides[m.user];
+      if (s.formationDef === s.formation) s.formationDef = d.v;
       // Com expulsões, sobram vagas vazias na nova formação.
       s.lineup = FB.fillSlots(S, d.v, s.lineup.filter(x => x != null).map(P));
       s.formation = d.v;
@@ -1669,6 +1776,15 @@
     'live-posture': d => { const m = ui.live.m; m.sides[m.user].posture = d.v; refreshSheet(); },
     'live-press': d => { const m = ui.live.m; m.sides[m.user].press = d.v; refreshSheet(); },
     'live-finish': () => finishLive(),
+    'live-formation-def': d => { const m = ui.live.m; const s = m.sides[m.user]; s.formationDef = d.v || s.formation; refreshSheet(); },
+    moment: d => {
+      const L = ui.live;
+      const r = L.m.resolveMoment(d.v);
+      closeSheet();
+      updateLive();
+      if (r) toast(r.goal ? '⚽ ' + r.text : r.text, 3000);
+      if (!L.paused) tickLoop();
+    },
   };
 
   document.addEventListener('click', e => {

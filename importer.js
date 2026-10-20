@@ -89,6 +89,37 @@
     return best;
   };
 
+  // ---------- Força e potencial ----------
+  // Calculados pelo valor de mercado, idade e histórico da carreira. São determinísticos:
+  // o mesmo jogador recebe sempre a mesma nota, em qualquer aparelho.
+
+  const hash = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); };
+
+  // Margem de evolução pela idade. trend = valor atual / valor de um ano antes.
+  FB.potFromAge = (ovr, age, { trend, peakRatio, minutes, name = '' } = {}) => {
+    let grow = age <= 18 ? 14 : age <= 20 ? 10 : age <= 22 ? 6 : age <= 24 ? 3 : age <= 26 ? 1 : 0;
+    if (grow) {
+      if (trend) grow += trend >= 2 ? 4 : trend >= 1.3 ? 2 : trend < 0.8 ? -2 : 0;
+      if (peakRatio && peakRatio > 1.5) grow += 1; // já valeu bem mais: mostrou nível maior
+      if (minutes != null && minutes >= 1500 && age <= 21) grow += 2; // titular ainda muito jovem
+      grow += (hash(name) % 3) - 1;
+    }
+    return clamp(ovr + Math.max(0, grow), ovr, 95);
+  };
+
+  // value e peak em reais; prev = valor de um ano antes; minutes = minutos na última temporada.
+  FB.rateFromCareer = ({ value, age, peak, prev, minutes, name = '' }) => {
+    let ovr = FB.ovrFromValue(value, age);
+    if (minutes != null) {
+      if (minutes >= 2500) ovr += 1;
+      else if (minutes < 400 && age >= 23) ovr -= 2; // valor alto sem jogar costuma ser aposta
+    }
+    if (peak && age >= 29 && peak > value * 3) ovr += 1; // veteranos perdem valor mais rápido que qualidade
+    ovr = clamp(Math.round(ovr), 35, 92);
+    const pot = FB.potFromAge(ovr, age, { trend: prev ? value / prev : null, peakRatio: peak ? peak / value : null, minutes, name });
+    return { ovr, pot };
+  };
+
   const isTransfermarkt = rows => rows.length && 'current_club_name' in rows[0] && 'market_value_in_eur' in rows[0];
 
   // Converte linhas (formato próprio ou transfermarkt-datasets) para jogadores do jogo.
@@ -109,7 +140,9 @@
         if (!pos || !r.name) continue;
         const eur = num(r.market_value_in_eur);
         const value = eur ? eur * FB.EUR_BRL : null;
-        out.push({ name: r.name, team: club, pos, age, ovr: value ? FB.ovrFromValue(value, age) : null, pot: null, sal: null });
+        const peak = num(r.highest_market_value_in_eur);
+        const rt = value ? FB.rateFromCareer({ value, age, peak: peak ? peak * FB.EUR_BRL : null, name: r.name }) : { ovr: null, pot: null };
+        out.push({ name: r.name, team: club, pos, age, ovr: rt.ovr, pot: rt.pot, sal: null });
       }
       return { players: out, warnings, source: 'transfermarkt-datasets' };
     }
@@ -123,11 +156,12 @@
       if (!free && !team) { warnings.push(`${name}: clube "${clubName}" não encontrado.`); return; }
       const age = Math.round(num(field(r, 'idade', 'age')) ?? 26);
       const value = FB.parseMoney(field(r, 'valor', 'valor_de_mercado', 'value', 'market_value'));
-      const ovr = num(field(r, 'forca', 'ovr', 'overall', 'habilidade'));
+      const given = num(field(r, 'forca', 'ovr', 'overall', 'habilidade'));
+      const ovr = given != null ? clamp(Math.round(given), 30, 95) : value ? FB.rateFromCareer({ value, age, name }).ovr : null;
+      const pot = num(field(r, 'potencial', 'pot', 'potential'));
       out.push({
-        name, team, pos, age,
-        ovr: ovr != null ? clamp(Math.round(ovr), 30, 95) : value ? FB.ovrFromValue(value, age) : null,
-        pot: num(field(r, 'potencial', 'pot', 'potential')),
+        name, team, pos, age, ovr,
+        pot: pot != null ? pot : ovr != null ? FB.potFromAge(ovr, age, { name }) : null,
         sal: FB.parseMoney(field(r, 'salario', 'salary', 'wage')),
       });
     });
@@ -175,7 +209,7 @@
       const p = FB.createPlayer(state, r.pos, 55, { age: r.age });
       p.n = r.name;
       if (r.ovr != null) p.ovr = r.ovr;
-      p.pot = Math.max(p.ovr, p.pot);
+      p.pot = Math.max(p.ovr, r.pot ?? p.pot);
       p.sal = r.sal || FB.calcSalary(p);
       state.free.push(p.id);
       count++;

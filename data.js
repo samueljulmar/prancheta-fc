@@ -103,6 +103,7 @@
     '3-5-2': { Z: 3, L: 0, M: 5, A: 2 },
     '3-4-3': { Z: 3, L: 0, M: 4, A: 3 },
     '5-3-2': { Z: 3, L: 2, M: 3, A: 2 },
+    '5-4-1': { Z: 3, L: 2, M: 4, A: 1 },
   };
 
   // Ordem dos slots: G, lateral esq., zagueiros, lateral dir., meias, atacantes.
