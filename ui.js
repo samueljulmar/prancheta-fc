@@ -150,7 +150,7 @@
     const started = m.started ? new Date(m.started).toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
     return `<div class="card career">
       <div class="row">${badge(t, 46)}<div class="grow"><b class="ellipsis" style="display:block;font-size:17px">${esc(m.club)}</b>
-        <div class="muted small ellipsis">${FB.DIV_NAMES[m.div]} · ${esc(m.coach)}</div></div></div>
+        <div class="muted small ellipsis">${esc(m.divName || FB.DIV_NAMES[m.div])} · ${esc(m.coach)}</div></div></div>
       <div class="chips">
         <span class="chip">📅 Temporada ${m.season}</span>
         ${m.rounds ? `<span class="chip">⚽ Rodada ${m.round}/${m.rounds}</span>` : ''}
@@ -169,7 +169,7 @@
     return `
       <div class="splash">
         <div class="logo">Prancheta<span> FC</span></div>
-        <div class="tagline">Assuma um clube brasileiro: estaduais, Brasileirão das Séries A a D, Copa do Brasil, Libertadores e Sul-Americana.</div>
+        <div class="tagline">Assuma um clube no Brasil, na América do Sul ou na Europa: estaduais, Brasileirão, ligas estrangeiras, Libertadores, Sul-Americana, Champions e Liga Europa.</div>
         ${used.length ? `<div class="row between" style="margin:8px 2px 10px"><b style="font-size:18px">Suas carreiras</b>
           <span class="muted small">${used.length} de ${FB.MAX_SLOTS}</span></div>
           ${used.map(n => slotCard(n, slots[n])).join('')}` : ''}
@@ -212,8 +212,11 @@
   function renderSetup() {
     const st = ui.setup;
     const W = st.world;
-    const teams = W.teams.filter(t => t.div === st.div)
+    const country = st.country || 'BRA';
+    const teams = W.teams.filter(t => (country === 'BRA' ? t.div === st.div : t.div === 5 && t.lg === country))
       .map(t => ({ t, s: FB.teamStrength(W, t) })).sort((a, b) => b.s - a.s);
+    const countries = [['BRA', 'Brasil'], ...Object.values(FB.LEAGUES).filter(L => W.teams.some(t => t.lg === L.key))
+      .map(L => [L.key, `${FB.COUNTRY[L.key] || L.short} — ${L.name}`])];
     return `
       <div style="padding:calc(16px + var(--safe-t)) 16px calc(100px + var(--safe-b))">
         <div class="row between" style="margin-bottom:14px">
@@ -224,12 +227,14 @@
         <p class="muted small" style="margin:0 0 14px">${W.pack === 'ficticio' ? 'Clubes fictícios.' : 'Clubes reais, temporada ' + W.season + '.'} ${st.imported ? '<b>' + esc(st.imported) + '</b>' : 'Elencos gerados.'}</p>
         <label class="field"><span>Nome do treinador</span>
           <input id="coach" maxlength="30" value="${esc(st.coach)}" placeholder="Seu nome" autocomplete="off"></label>
-        <div class="seg fill">${[0, 1, 2, 3].map(i => `<button class="${st.div === i ? 'on' : ''}" data-act="setup-div" data-v="${i}">${FB.DIV_NAMES[i].replace('Série ', 'Série ')}</button>`).join('')}</div>
+        <label class="field"><span>País</span><select id="setup-country" class="select">
+          ${countries.map(([k, l]) => `<option value="${k}" ${k === country ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+        ${country === 'BRA' ? `<div class="seg fill">${[0, 1, 2, 3].map(i => `<button class="${st.div === i ? 'on' : ''}" data-act="setup-div" data-v="${i}">${FB.DIV_NAMES[i]}</button>`).join('')}</div>` : ''}
         <div class="list">${teams.map(({ t, s }) => `
           <button class="item ${st.sel === t.id ? 'me' : ''}" data-act="setup-pick" data-id="${t.id}">
             ${badge(t)}
             <div class="grow"><div class="name ellipsis">${esc(t.name)}</div>
-              <div class="meta">${esc(t.city)}/${esc(t.uf)} · Caixa ${money(t.cash)}</div></div>
+              <div class="meta">${esc(t.city)}${t.uf ? '/' + esc(t.uf) : ''} · Caixa ${money(t.cash)}</div></div>
             <div class="small">${stars(s)}</div>
           </button>`).join('')}
         </div>
@@ -275,6 +280,7 @@
           if (j.calendar || j.dates) {
             closeSheet();
             if (!validSave(j)) { toast('Save de uma versão antiga ou inválido.', 3500); return; }
+            FB.migrate(j);
             confirmSheet('Carregar save', `Carregar a carreira de ${j.coach || 'treinador'} (${j.season})? O jogo atual será substituído.`, 'Carregar', () => {
               const n = FB.freeSlot();
               if (n == null) { toast(`Limite de ${FB.MAX_SLOTS} carreiras atingido.`); return; }
@@ -335,7 +341,7 @@
         <p class="muted small" style="margin-top:0">Escolha um novo clube para continuar sua carreira.</p>
         <div class="list">${offers.map(id => `
           <button class="item" data-act="take-job" data-id="${id}">${badge(T(id))}
-            <div class="grow"><div class="name">${esc(T(id).name)}</div><div class="meta">${FB.DIV_NAMES[T(id).div]}</div></div>
+            <div class="grow"><div class="name">${esc(T(id).name)}</div><div class="meta">${esc(FB.divName(T(id)))}</div></div>
             <span class="btn sm primary">Aceitar</span></button>`).join('')}</div>
         <button class="btn danger block" data-act="slot-del" data-v="${FB.slot}">Encerrar carreira</button></div>`;
       return html + mailPreview();
@@ -344,7 +350,7 @@
     if (S.seasonOver) {
       const st = FB.leagueStanding(S, t.id);
       html += `<div class="card next"><div class="comp">Temporada ${S.season} encerrada</div>
-        ${st ? `<p style="margin:0 0 14px">Você terminou em <b>${st.pos}º</b> na ${FB.DIV_NAMES[t.div]}.</p>` : ''}
+        ${st ? `<p style="margin:0 0 14px">Você terminou em <b>${st.pos}º</b> na ${esc(FB.divName(t))}.</p>` : ''}
         <button class="btn primary big block" data-act="end-season">Ver balanço e iniciar ${S.season + 1}</button></div>`;
       return html + mailPreview();
     }
@@ -405,7 +411,7 @@
       const comps = [...new Set(S.dates[S.di].slots.map(s => S.comps[s.key].kind === 'estadual' ? 'Estaduais' : S.comps[s.key].short))].join(', ');
       return `<div class="card next"><div class="comp">${esc(date(today))} · ${esc(comps)}</div>
         <p class="muted" style="margin:0 0 14px">Seu time não joga nesta data.</p>
-        <button class="btn primary big block" data-act="play">Avançar ▶</button></div>`;
+        <button class="btn primary big block" data-act="play">Avançar até o próximo jogo ▶</button></div>`;
     }
     const c = S.comps[f.comp.key];
     const home = f.h === t.id;
@@ -1017,7 +1023,7 @@
         ${lg ? `<div class="row between small muted" style="margin-top:4px"><span>Último jogo em casa</span><span>${lg.att.toLocaleString('pt-BR')} pagantes · ${money(lg.income)}</span></div>` : ''}
         <div class="row between" style="margin-top:12px"><span>Ingresso</span>
           <div class="stepper"><button class="btn" data-act="ticket" data-v="-5">−</button><b>R$ ${t.ticket}</b><button class="btn" data-act="ticket" data-v="5">+</button></div></div>
-        <p class="muted small">Público estimado: ~${estAtt.toLocaleString('pt-BR')} (${Math.round(estAtt / t.cap * 100)}% do estádio) · Referência da divisão: R$ ${FB.REF_TICKET[t.div]}</p>
+        <p class="muted small">Público estimado: ~${estAtt.toLocaleString('pt-BR')} (${Math.round(estAtt / t.cap * 100)}% do estádio) · Referência da liga: R$ ${FB.econ(t).ticket}</p>
         <button class="btn block" data-act="expand" ${t.cash < 5000 * FB.SEAT_COST ? 'disabled' : ''}>Ampliar +5.000 lugares (${money(5000 * FB.SEAT_COST)})</button>
       </div>`,
       diretoria: `<div class="card"><h3>Diretoria</h3>
@@ -1034,7 +1040,7 @@
       </div>`,
       carreira: `${contractCard()}<div class="card"><h3>Carreira de ${esc(S.coach)}</h3>${S.history.length ? S.history.map(h => `
         <div class="row between small" style="padding:4px 0"><span>${h.season} · ${esc(T(h.team).name)}</span>
-        <span>${h.pos ? h.pos + 'º ' : ''}${FB.DIV_NAMES[h.div]}${h.titles && h.titles.length ? ' · 🏆 ' + esc(h.titles.join(', ')) : ''}</span></div>`).join('') : '<p class="muted small" style="margin:0">Primeira temporada.</p>'}</div>`,
+        <span>${h.pos ? h.pos + 'º ' : ''}${esc(h.lgName || FB.DIV_NAMES[h.div])}${h.titles && h.titles.length ? ' · 🏆 ' + esc(h.titles.join(', ')) : ''}</span></div>`).join('') : '<p class="muted small" style="margin:0">Primeira temporada.</p>'}</div>`,
       config: `<div class="card"><h3>Partidas</h3>
         <div class="row between"><span>Velocidade padrão</span>
           <div class="seg" style="margin:0">${[1, 2, 4].map(v => `<button class="${S.settings.speed === v ? 'on' : ''}" data-act="speed-default" data-v="${v}">${v}x</button>`).join('')}</div></div>
@@ -1178,7 +1184,7 @@
           <div class="stat"><small>Força</small><b>${FB.teamStrength(S, opp).toFixed(0)}</b> ${stars(FB.teamStrength(S, opp))}</div>
           <div class="stat"><small>Nós</small><b>${FB.teamStrength(S, t).toFixed(0)}</b> ${stars(FB.teamStrength(S, t))}</div>
           <div class="stat"><small>Esquema habitual</small><b>${opp.formation}</b></div>
-          <div class="stat"><small>${st ? esc(S.comps[st.key].short) : esc(FB.DIV_NAMES[opp.div])}</small><b>${st && st.row.j ? st.pos + 'º' : '–'}</b> <span class="small muted">${opp.country !== 'BRA' ? FB.COUNTRY[opp.country] : ''}</span></div>
+          <div class="stat"><small>${st ? esc(S.comps[st.key].short) : esc(FB.divName(opp))}</small><b>${st && st.row.j ? st.pos + 'º' : '–'}</b> <span class="small muted">${opp.country !== 'BRA' ? FB.COUNTRY[opp.country] : ''}</span></div>
         </div>
         ${opp.form && opp.form.length ? `<div class="row between" style="margin-top:10px"><span class="muted small">Últimos jogos</span>${formHtml(opp.form.slice(-5))}</div>` : ''}</div>
       <div class="card"><h3>Destaques</h3>${key.map(p => `<div class="row" style="padding:4px 0">${posTag(p.pos)}<span class="grow small">${esc(p.n)}</span><b>${p.ovr}</b></div>`).join('')}
@@ -1207,7 +1213,19 @@
   function startDate(talk) {
     if (S.fired || S.seasonOver) return;
     const day = FB.startDate(S, { manual: true });
-    if (!day.userMatch) { showRoundResults(FB.finishDate(S, day)); return; }
+    if (!day.userMatch) {
+      // Sem jogo do seu time: simula as datas seguintes até o próximo compromisso (ou algo que peça decisão).
+      let res = FB.finishDate(S, day);
+      let n = 1;
+      const decide = () => S.inbox.some(m => !m.read && ((m.offer && !m.offer.done) || m.injury));
+      while (n < 30 && !S.seasonOver && !S.fired && !FB.userFixture(S) && !decide()) {
+        res = FB.finishDate(S, FB.startDate(S, { manual: true }));
+        n++;
+      }
+      res.skipped = n;
+      showRoundResults(res);
+      return;
+    }
     ui.live = { day, m: day.userMatch, speed: S.settings.speed, paused: false, shown: 0, timer: null };
     day.userMatch.interactive = S.settings.moments !== false;
     if (talk && talk !== 'nenhuma') day.userMatch.preTalk(day.userMatch.user, talk);
@@ -1428,10 +1446,10 @@
     render();
     const um = res.userMatch;
     const ref = um ? um.comp : null;
-    const div = me().div;
+    const lgKey = FB.compKeyOf(me());
     let list;
     if (ref) list = res.matches.filter(m => m.comp.key === ref.key && m.comp.ph === ref.ph && (ref.g == null || m.comp.g === ref.g));
-    else list = res.matches.filter(m => m.comp.key === FB.leagueKey(div) || m.comp.key === 'A');
+    else list = res.matches.filter(m => m.comp.key === lgKey || m.comp.key === 'A');
     const others = list.filter(m => m !== um);
     openSheet(() => {
       let head;
@@ -1448,7 +1466,8 @@
           <div class="list">${resultRow(h.tid, a.tid, { hg: h.goals, ag: a.goals }, um.pens)}</div>
           ${h.scorers.length || a.scorers.length ? `<p class="small muted" style="margin-top:-4px">⚽ ${[goals(h), goals(a)].filter(Boolean).join(' · ')}</p>` : ''}
           ${hurt ? `<p class="small pos-red">🚑 ${hurt} jogador(es) lesionado(s): veja o diagnóstico em Mensagens.</p>` : ''}`;
-      } else head = `<h2>Data concluída</h2><p class="muted small">Seu time não jogou. Veja os resultados.</p>`;
+      } else head = `<h2>${res.skipped > 1 ? res.skipped + ' datas simuladas' : 'Data concluída'}</h2>
+        <p class="muted small">Seu time não jogou${res.skipped > 1 ? ' nessas datas' : ''}. Veja os resultados${res.skipped > 1 ? ' da última' : ''}.</p>`;
       const lbl = others[0] ? FB.compLabel(S, others[0]) : '';
       return `${head}
         ${others.length ? `<p class="muted small" style="margin:12px 0 6px">${esc(lbl)}</p>
@@ -1464,7 +1483,7 @@
       const t = me();
       return `<h2>Balanço ${sm.season}</h2>
         <div class="card" style="margin-top:10px">
-          ${sm.userPos ? `<p style="margin:0">Você terminou em <b>${sm.userPos}º</b> na ${FB.DIV_NAMES[sm.userDiv]}.</p>` : ''}
+          ${sm.userPos ? `<p style="margin:0">Você terminou em <b>${sm.userPos}º</b> na ${esc(sm.userDivName || FB.DIV_NAMES[sm.userDiv])}.</p>` : ''}
           ${sm.met != null ? `<p class="small ${sm.met ? 'pos-green' : 'pos-red'}" style="margin:6px 0 0">Objetivo "${esc(sm.objective)}": ${sm.met ? 'cumprido ✔' : 'não cumprido ✘'}</p>` : ''}
           <p class="small muted" style="margin:6px 0 0">Premiação da liga: ${money(sm.prize || 0)}</p>
           ${sm.up.includes(S.userId) ? '<p class="pos-green" style="margin:8px 0 0"><b>⬆ ACESSO CONQUISTADO!</b></p>' : ''}
@@ -1477,9 +1496,9 @@
         ${sm.retired.length ? `<div class="card small"><h3>Aposentadorias</h3>${sm.retired.map(esc).join(', ')}</div>` : ''}
         ${sm.youth.length ? `<div class="card small"><h3>Subiram da base</h3>${sm.youth.map(esc).join(', ')}</div>` : ''}
         ${sm.offers.length ? `<div class="card"><h3>Propostas de emprego</h3>${sm.offers.map(id => `
-          <div class="row" style="padding:6px 0">${badge(T(id), 28)}<div class="grow"><b>${esc(T(id).name)}</b><div class="muted small">${FB.DIV_NAMES[T(id).div]}</div></div>
+          <div class="row" style="padding:6px 0">${badge(T(id), 28)}<div class="grow"><b>${esc(T(id).name)}</b><div class="muted small">${esc(FB.divName(T(id)))}</div></div>
           <button class="btn sm" data-act="take-job" data-id="${id}">Aceitar</button></div>`).join('')}</div>` : ''}
-        <p class="muted small">Temporada ${S.season}: ${esc(t.name)} na ${FB.DIV_NAMES[t.div]}. ${S.fired ? '' : 'Objetivo: ' + esc(S.board.text) + '.'}</p>
+        <p class="muted small">Temporada ${S.season}: ${esc(t.name)} na ${esc(FB.divName(t))}. ${S.fired ? '' : 'Objetivo: ' + esc(S.board.text) + '.'}</p>
         <button class="btn primary block big" data-act="close">Começar ${S.season}</button>`;
     });
   }
@@ -1714,7 +1733,7 @@
       openSheet(() => `<h2>Emprestar ${esc(p.n)}</h2>
         <p class="muted small">Até o fim de ${S.season}. O clube que recebe paga o salário inteiro, e ele ganha minutos para evoluir.</p>
         <div class="list">${clubs.map(id => `<button class="item" data-act="loan-out" data-id="${p.id}" data-v="${id}">${badge(T(id))}
-          <div class="grow"><div class="name ellipsis">${esc(T(id).name)}</div><div class="meta">${FB.DIV_NAMES[T(id).div]}</div></div>
+          <div class="grow"><div class="name ellipsis">${esc(T(id).name)}</div><div class="meta">${esc(FB.divName(T(id)))}</div></div>
           <span class="btn sm">Emprestar</span></button>`).join('') || '<div class="empty">Nenhum clube interessado agora.</div>'}</div>
         <button class="btn block" data-act="close">Cancelar</button>`);
     },
@@ -1802,6 +1821,12 @@
 
   document.addEventListener('change', e => {
     if (e.target.id === 'comp-select' && e.target.value) A.comp({ v: e.target.value });
+    if (e.target.id === 'setup-country' && ui.setup) {
+      ui.setup.coach = document.getElementById('coach').value;
+      ui.setup.country = e.target.value;
+      ui.setup.sel = null;
+      render();
+    }
     if (e.target.id === 'captain-select') { me().captain = e.target.value ? +e.target.value : null; FB.save(S); toast('Capitão definido.'); }
   });
 

@@ -34,7 +34,7 @@
     const t = state.teams[state.userId];
     const str = FB.teamStrength(state, t);
     const goals = [];
-    if (t.div <= 3) goals.push({ k: 'liga', comp: FB.leagueKey(t.div), text: state.board.text, w: 25, status: 'andamento' });
+    if (FB.compKeyOf(t) && state.comps[FB.compKeyOf(t)]) goals.push({ k: 'liga', comp: FB.compKeyOf(t), text: state.board.text, w: 25, status: 'andamento' });
 
     for (const c of Object.values(state.comps)) {
       if (!c.teams.includes(t.id) || c.kind === 'liga' || !FB.aliveIn(c, t.id)) continue;
@@ -56,7 +56,7 @@
     const cap = Math.round(payroll * 1.12 / 10000) * 10000;
     goals.push({ k: 'folha', cap, text: `Manter a folha salarial abaixo de ${FB.fmtMoney(cap)}/mês`, w: 5, status: 'andamento' });
     goals.push({ k: 'caixa', text: 'Fechar a temporada com caixa positivo', w: 6, status: 'andamento' });
-    if (t.div <= 2) goals.push({ k: 'base', n: 2, text: 'Dar oportunidades à base: 2 jogadores de até 21 anos com 10+ jogos', w: 4, status: 'andamento' });
+    if (t.div <= 2 || t.div === 5) goals.push({ k: 'base', n: 2, text: 'Dar oportunidades à base: 2 jogadores de até 21 anos com 10+ jogos', w: 4, status: 'andamento' });
 
     const budget = Math.max(0, Math.round(t.cash * (str >= 72 ? 0.55 : 0.45) / 10000) * 10000);
     state.board.goals = goals;
@@ -190,14 +190,14 @@
   // Salário mensal conforme a divisão e o tamanho do clube.
   const coachSalary = state => {
     const t = state.teams[state.userId];
-    const base = [180000, 70000, 30000, 15000][t.div] ?? 15000;
+    const base = Math.max(15000, Math.round(FB.econ(t).tv * 0.04));
     const k = clamp(0.7 + (FB.teamStrength(state, t) - 55) / 50, 0.5, 1.6);
     return Math.round(base * k / 1000) * 1000;
   };
 
   FB.newContract = state => {
     const t = state.teams[state.userId];
-    const years = t.div <= 1 ? 2 : 1;
+    const years = t.div <= 1 || FB.econ(t).tv >= 2e6 ? 2 : 1;
     state.contract = { club: t.id, sal: coachSalary(state), from: state.season, until: state.season + years - 1 };
   };
 

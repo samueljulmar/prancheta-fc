@@ -128,7 +128,7 @@
       const p = state.players[state.youngest.pid];
       if (p) options.push(() => FB.news(state, 'curiosidade', 'Mais jovem a marcar', `${p.n}, do ${T(p.t ?? state.youngest.t).name}, é o jogador mais jovem a marcar na temporada, com ${state.youngest.age} anos.`));
     }
-    const comps = ['A', 'B', user.div <= 3 ? FB.leagueKey(user.div) : null].filter(Boolean);
+    const comps = ['A', 'B', FB.compKeyOf(user)].filter(Boolean);
     const key = pick(comps);
     const c = state.comps[key];
     if (c) {

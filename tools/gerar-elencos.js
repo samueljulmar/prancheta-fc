@@ -24,7 +24,7 @@ if (!inDir || !outDir) {
 global.window = global;
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 const root = path.join(__dirname, '..');
-for (const f of ['data.js', 'pack-brasil.js', 'medical.js', 'news.js', 'engine.js', 'board.js', 'importer.js']) require(path.join(root, f));
+for (const f of ['data.js', 'pack-brasil.js', 'pack-mundo.js', 'medical.js', 'news.js', 'engine.js', 'board.js', 'importer.js']) require(path.join(root, f));
 const FB = global.FB;
 const world = FB.createWorld({ pack: 'real' });
 const SEASON = world.season;
@@ -75,16 +75,9 @@ const DAY = 86400000;
   const rows = [];
   let maxSeason = 0;
   await eachRow(playersFile, r => { rows.push(r); maxSeason = Math.max(maxSeason, +r.last_season || 0); });
-  // Só casa clubes do mesmo país: a liga da base (BRA1, ARG1, COL1...) diz o país do clube.
-  const COUNTRY_OF = [[/^BRA/, 'BRA'], [/^AR/, 'ARG'], [/^COL/, 'COL'], [/^UR/, 'URU'], [/^CL/, 'CHI'], [/^PAR|^PR1/, 'PAR'],
-    [/^EC/, 'ECU'], [/^PE|^TDeA/, 'PER'], [/^BO/, 'BOL'], [/^VZ|^VE/, 'VEN']];
-  const countryOf = comp => (COUNTRY_OF.find(([re]) => re.test(comp || '')) || [])[1] || null;
-  const byCountry = new Map();
-  for (const t of world.teams) {
-    if (t.div === 4) continue;
-    if (!byCountry.has(t.country)) byCountry.set(t.country, { teams: [] });
-    byCountry.get(t.country).teams.push(t);
-  }
+  // Só casa clubes do mesmo país: a liga da base (BRA1, ARG1, GB1...) diz o país do clube.
+  const countryOf = FB.countryOfComp;
+
   // Grafias da base diferentes das do jogo.
   const FIX = { 'Mirasol Futebol Clube': 'Mirassol Futebol Clube' };
 
@@ -96,8 +89,8 @@ const DAY = 86400000;
     const comp = r.current_club_domestic_competition_id;
     const key = r.current_club_name + '|' + comp;
     if (!clubCache.has(key)) {
-      const pool = byCountry.get(countryOf(comp));
-      clubCache.set(key, pool ? FB.findClub(pool, FIX[r.current_club_name] || r.current_club_name) : null);
+      const country = countryOf(comp);
+      clubCache.set(key, country ? FB.findClub(world, FIX[r.current_club_name] || r.current_club_name, country) : null);
     }
     const club = clubCache.get(key);
     if (!club) { unmatched.set(r.current_club_name, (unmatched.get(r.current_club_name) || 0) + 1); continue; }
@@ -189,11 +182,12 @@ const DAY = 86400000;
   lines.push(`Histórico de valores: ${valFile ? 'sim' : 'não'} · Minutos jogados: ${appFile ? 'sim' : 'não'}`);
   lines.push(`Jogadores no arquivo: ${out.length}`);
   lines.push('');
-  for (const div of [0, 1, 2, 3, 5]) {
-    const teams = world.teams.filter(t => t.div === div);
+  const groups = [0, 1, 2, 3].map(d => [FB.DIV_NAMES[d], world.teams.filter(t => t.div === d)])
+    .concat(Object.values(FB.LEAGUES).map(L => [L.name, world.teams.filter(t => t.lg === L.key)]));
+  for (const [label, teams] of groups) {
     if (!teams.length) continue;
     const ok = teams.filter(t => (byClub.get(t) || 0) >= 11);
-    lines.push(`${div === 5 ? 'Sul-americanos' : FB.DIV_NAMES[div]}: ${ok.length} de ${teams.length} clubes com elenco real (11+ jogadores)`);
+    lines.push(`${label}: ${ok.length} de ${teams.length} clubes com elenco real (11+ jogadores)`);
     for (const t of teams) {
       const src = chosen.get(t) ? `${chosen.get(t)}` : '';
       lines.push(`  ${(byClub.get(t) || 0) >= 11 ? '✔' : '✘'} ${t.name}: ${byClub.get(t) || 0}${src ? '  ← ' + src : ''}`);

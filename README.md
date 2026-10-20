@@ -1,6 +1,6 @@
 # Prancheta FC
 
-Jogo de gerência de futebol brasileiro para celular, inspirado no **Brasfoot** (rapidez, calendário cheio,
+Jogo de gerência de futebol para celular, com o Brasil no centro e o mundo em volta, inspirado no **Brasfoot** (rapidez, calendário cheio,
 mercado) e no **Football Manager** (tática, treino, preleção, departamento médico, notas). Roda no navegador
 e pode ser instalado como app (PWA), funcionando offline.
 
@@ -30,6 +30,24 @@ Temporada de janeiro a dezembro, com datas reais (sábados para o Brasileirão e
 
 Os cartões e suspensões são contados por competição. As janelas de transferência abrem do início do ano até o
 começo do Brasileirão e em julho; jogadores livres podem ser contratados a qualquer momento.
+
+## Ligas do mundo
+
+Além do Brasil, todas estas ligas são jogáveis: dá para começar a carreira nelas e receber propostas de clubes de lá.
+
+| Continente | Ligas |
+| --- | --- |
+| América do Sul | Argentina (30 clubes, turno único), Uruguai, Paraguai, Chile, Colômbia, Equador, Peru, Bolívia e Venezuela |
+| Europa | Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Liga Portugal e Eredivisie (composição 2025/26) |
+
+- As ligas estrangeiras são de pontos corridos e jogam aos domingos ao longo do ano; por enquanto só há a primeira divisão de
+  cada país (sem acesso nem rebaixamento lá fora). Nas ligas sul-americanas a composição de 2026 é aproximada.
+- **Libertadores e Sul-Americana** passam a ter vagas por país, pela tabela de cada liga (Argentina 6, Colômbia, Uruguai,
+  Paraguai, Chile e Equador 3, Peru 2, Bolívia e Venezuela 1, além dos brasileiros).
+- **Liga dos Campeões e Liga Europa**: 32 clubes cada, com vagas pelas ligas europeias, grupos e mata-mata.
+- Cada liga tem a própria economia (TV, patrocínio, ingresso e premiação); os jogadores gerados têm nomes do país do clube.
+- Carreiras antigas recebem os clubes novos ao abrir; as ligas novas começam na temporada seguinte.
+- Quando seu time não joga, *Avançar* simula as datas seguintes até o próximo jogo.
 
 ## Carreiras e painel
 
@@ -157,7 +175,8 @@ Nomes, escudos e marcas de clubes e jogadores reais pertencem aos donos. Use bas
 | Arquivo | Conteúdo |
 | --- | --- |
 | `data.js` | Utilitários, nomes, formações, estaduais e cidades do interior |
-| `pack-brasil.js` | Clubes reais do Brasil 2026 e sul-americanos |
+| `pack-brasil.js` | Clubes reais do Brasil 2026 |
+| `pack-mundo.js` | Ligas da América do Sul e da Europa (clubes, economia e vagas) |
 | `engine.js` | Competições, calendário, partida, tática, finanças, mercado, temporada e save |
 | `board.js` | Metas da diretoria, orçamento, teto salarial, e-mails e contrato do treinador |
 | `medical.js` | Lesões, tratamentos e recuperação |

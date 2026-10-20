@@ -84,9 +84,52 @@
     'Teco', 'Cacau', 'Gringo', 'Baianinho', 'Tatu', 'Mineirinho', 'Russo', 'Sabiá', 'Pirulito', 'Bozó', 'Jajá',
     'Neto Paraíba', 'Tinga Jr.', 'Bolota', 'Magrão', 'Xodó', 'Dedé', 'Cuca Jr.', 'Kiko', 'Nino', 'Pepeu', 'Vavá Neto'];
 
-  FB.randomName = () => {
-    if (Math.random() < 0.18) return FB.pick(FB.NICK);
-    return FB.pick(FB.FIRST) + ' ' + FB.pick(FB.LAST);
+  const L = str => str.split(',');
+  FB.NAME_POOLS = {
+    br: { first: FB.FIRST, last: FB.LAST },
+    es: {
+      first: L('Juan,Matías,Santiago,Nicolás,Facundo,Agustín,Lautaro,Franco,Gonzalo,Joaquín,Tomás,Federico,Emiliano,Ezequiel,Leandro,Maximiliano,Rodrigo,Sebastián,Diego,Alejandro,Andrés,Carlos,Cristian,Brian,Kevin,Jonathan,Luis,Jorge,Miguel,Héctor,Wilmar,Jhon,Yerson,Duván,Edinson,Darwin,Fabián,Ángel,Iván,Hernán,Ramiro,Thiago,Valentín,Bruno,Mauricio,Esteban,Óscar,Ricardo,Raúl,Germán'),
+      last: L('González,Rodríguez,Fernández,López,Martínez,García,Pérez,Sánchez,Romero,Díaz,Álvarez,Torres,Ruiz,Ramírez,Flores,Acosta,Benítez,Medina,Herrera,Suárez,Aguirre,Gutiérrez,Rojas,Molina,Castro,Ortiz,Silva,Núñez,Vargas,Cabrera,Ríos,Morales,Giménez,Sosa,Ledesma,Paredes,Cáceres,Valdez,Quintero,Mosquera,Palacios,Cuesta,Zapata,Arango,Carrillo,Vera,Villalba,Escobar,Domínguez,Peralta'),
+    },
+    esp: {
+      first: L('Álvaro,Pablo,Sergio,Javier,Daniel,Adrián,Marcos,Iker,Unai,Mikel,Asier,Jon,Raúl,Carlos,Alejandro,David,Rubén,Jesús,Fernando,Óscar,Hugo,Martín,Mario,Víctor,Jorge,Íñigo,Aitor,Dani,Gerard,Pau,Marc,Jordi,Eric,Nico,Borja,Ander,Rodrigo,Iván,Samuel,Diego'),
+      last: L('García,Fernández,González,Rodríguez,López,Martínez,Sánchez,Pérez,Gómez,Martín,Jiménez,Ruiz,Hernández,Díaz,Moreno,Muñoz,Álvarez,Romero,Navarro,Torres,Domínguez,Gil,Vázquez,Serrano,Ramos,Blanco,Molina,Morales,Ortega,Delgado,Castro,Ortiz,Rubio,Marín,Sanz,Iglesias,Medina,Garrido,Cortés,Castillo,Etxeberria,Aguirre,Zubeldia,Puig,Vidal,Soler,Ferrer'),
+    },
+    en: {
+      first: L('James,Jack,Harry,Oliver,George,Charlie,Thomas,William,Jacob,Alfie,Joshua,Daniel,Ben,Luke,Callum,Ryan,Lewis,Kyle,Jordan,Jamie,Reece,Mason,Declan,Aaron,Conor,Liam,Ethan,Joe,Sam,Max,Harvey,Lucas,Noah,Tyler,Dominic'),
+      last: L('Smith,Jones,Taylor,Brown,Williams,Wilson,Johnson,Davies,Robinson,Wright,Thompson,Evans,Walker,White,Roberts,Green,Hall,Wood,Jackson,Clarke,Hughes,Edwards,Turner,Hill,Cooper,Ward,Morris,Moore,Parker,Bennett,Harris,Lewis,King,Baker,Carter,Mitchell,Palmer,Barnes,Rice,Shaw'),
+    },
+    it: {
+      first: L('Lorenzo,Alessandro,Matteo,Andrea,Francesco,Federico,Davide,Riccardo,Marco,Luca,Simone,Giacomo,Nicolò,Gianluca,Stefano,Antonio,Giovanni,Leonardo,Tommaso,Filippo,Daniele,Pietro,Manuel,Fabio,Mattia,Samuele,Emanuele,Christian,Alberto,Salvatore'),
+      last: L('Rossi,Russo,Ferrari,Esposito,Bianchi,Romano,Colombo,Ricci,Marino,Greco,Bruno,Gallo,Conti,De Luca,Mancini,Costa,Giordano,Rizzo,Lombardi,Moretti,Barbieri,Fontana,Santoro,Mariani,Rinaldi,Caruso,Ferrara,Galli,Martini,Leone,Longo,Gentile,Martinelli,Vitale,Lombardo,Serra,Coppola,De Santis,Bellini,Pellegrini'),
+    },
+    de: {
+      first: L('Lukas,Leon,Jonas,Niklas,Felix,Maximilian,Julian,Tim,Jan,Florian,Tobias,Moritz,Kai,Leroy,Marco,Kevin,Timo,Mats,Thomas,Manuel,Sebastian,Philipp,Benjamin,Robin,David,Lennart,Joshua,Nico,Matthias,Paul,Luca,Finn,Jonathan,Elias,Noah'),
+      last: L('Müller,Schmidt,Schneider,Fischer,Weber,Meyer,Wagner,Becker,Schulz,Hoffmann,Koch,Richter,Klein,Wolf,Schröder,Neumann,Schwarz,Zimmermann,Braun,Krüger,Hofmann,Hartmann,Lange,Werner,Krause,Lehmann,Köhler,Maier,Kaiser,Fuchs,Brandt,Vogel,Keller,Roth,Beck,Lorenz,Baumann,Franke,Albrecht,Winkler'),
+    },
+    fr: {
+      first: L('Lucas,Hugo,Théo,Nathan,Louis,Enzo,Mathis,Antoine,Kylian,Ousmane,Moussa,Mamadou,Ibrahima,Youssouf,Adrien,Benjamin,Clément,Maxime,Jules,Baptiste,Florian,Kevin,Rayan,Wesley,Jordan,Aurélien,Randal,Mattéo,Bastien,Warren'),
+      last: L('Martin,Bernard,Dubois,Thomas,Robert,Richard,Petit,Durand,Leroy,Moreau,Simon,Laurent,Lefebvre,Michel,Garcia,David,Bertrand,Roux,Vincent,Fournier,Morel,Girard,André,Mercier,Dupont,Lambert,Bonnet,François,Diallo,Traoré,Koné,Camara,Sissoko,Mendy,Diop,Touré,Kanté,Cissé,Gueye,Fofana'),
+    },
+    pt: {
+      first: L('João,Rúben,Diogo,Bernardo,Gonçalo,Rafael,Tiago,André,Nuno,Pedro,Francisco,Ricardo,Rui,Bruno,Vítor,Miguel,Duarte,Tomás,Martim,Hugo,Fábio,Renato,Sérgio,Luís,Henrique'),
+      last: L('Silva,Santos,Ferreira,Pereira,Oliveira,Costa,Rodrigues,Martins,Jesus,Sousa,Fernandes,Gonçalves,Gomes,Lopes,Marques,Alves,Almeida,Ribeiro,Pinto,Carvalho,Teixeira,Moreira,Correia,Mendes,Nunes,Soares,Vieira,Monteiro,Cardoso,Rocha,Neves,Coelho,Cruz,Cunha,Pires,Ramos,Reis,Simões,Antunes,Matos'),
+    },
+    nl: {
+      first: L('Daan,Sem,Lucas,Milan,Levi,Luuk,Jesse,Thijs,Bram,Ruben,Tim,Stijn,Jasper,Wout,Joey,Kenneth,Teun,Jens,Bart,Davy,Matthijs,Ryan,Sven,Koen,Mats,Noa,Quinten,Calvin,Justin,Owen'),
+      last: L('de Jong,Jansen,de Vries,van den Berg,van Dijk,Bakker,Janssen,Visser,Smit,Meijer,de Boer,Mulder,de Groot,Bos,Vos,Peters,Hendriks,van Leeuwen,Dekker,Brouwer,de Wit,Dijkstra,Smits,de Graaf,van der Meer,Kok,Jacobs,de Haan,Vermeulen,van den Heuvel'),
+    },
+  };
+  FB.COUNTRY_POOL = { BRA: 'br', ENG: 'en', ESP: 'esp', ITA: 'it', GER: 'de', FRA: 'fr', POR: 'pt', NED: 'nl' };
+  // Elencos europeus têm muitos estrangeiros; os sul-americanos, alguns.
+  const MIX = { br: 0.05, es: 0.08 };
+
+  FB.randomName = (country = 'BRA') => {
+    let pool = FB.COUNTRY_POOL[country] || 'es';
+    if (Math.random() < (MIX[pool] ?? 0.35)) pool = FB.pick(Object.keys(FB.NAME_POOLS));
+    if (pool === 'br' && Math.random() < 0.18) return FB.pick(FB.NICK);
+    const P = FB.NAME_POOLS[pool];
+    return FB.pick(P.first) + ' ' + FB.pick(P.last);
   };
 
   FB.POS = ['G', 'Z', 'L', 'M', 'A'];

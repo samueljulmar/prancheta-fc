@@ -71,13 +71,14 @@
   const STOP = new Set(['fc', 'ec', 'sc', 'ac', 'cr', 'se', 'fr', 'cf', 'ca', 'cd', 'club', 'clube', 'futebol', 'football', 'foot',
     'ball', 'esporte', 'esportivo', 'sociedade', 'esportiva', 'associacao', 'regatas', 'de', 'do', 'da', 'dos', 'e', 'the']);
   const words = s => FB.norm(s).split(' ').filter(w => w && !STOP.has(w));
-  FB.findClub = (state, name) => {
+  // country (opcional) restringe a busca aos clubes daquele país.
+  FB.findClub = (state, name, country) => {
     const n = FB.norm(name);
     if (!n) return null;
     const have = new Set(words(name));
     let best = null, bl = 0;
     for (const t of state.teams) {
-      if (t.div === 4) continue;
+      if (t.div === 4 || (country && t.country !== country)) continue;
       if (t.short.toLowerCase() === n) return t;
       for (const k of t.keys || []) {
         const kw = words(k);
@@ -120,6 +121,12 @@
     return { ovr, pot };
   };
 
+  // País pela liga do transfermarkt-datasets (BRA1, GB1, ES1...).
+  const COUNTRY_OF = [[/^BRA/, 'BRA'], [/^AR/, 'ARG'], [/^COL/, 'COL'], [/^UR/, 'URU'], [/^CL/, 'CHI'], [/^PAR|^PR1/, 'PAR'],
+    [/^EC/, 'ECU'], [/^PE|^TDeA/, 'PER'], [/^BO/, 'BOL'], [/^VZ|^VE/, 'VEN'],
+    [/^GB/, 'ENG'], [/^ES/, 'ESP'], [/^IT/, 'ITA'], [/^L1$|^L2$/, 'GER'], [/^FR/, 'FRA'], [/^PO/, 'POR'], [/^NL/, 'NED']];
+  FB.countryOfComp = comp => (COUNTRY_OF.find(([re]) => re.test(comp || '')) || [])[1] || null;
+
   const isTransfermarkt = rows => rows.length && 'current_club_name' in rows[0] && 'market_value_in_eur' in rows[0];
 
   // Converte linhas (formato próprio ou transfermarkt-datasets) para jogadores do jogo.
@@ -131,8 +138,11 @@
       const cache = new Map();
       for (const r of rows) {
         if (maxSeason && +r.last_season < maxSeason - 1) continue;
-        if (!cache.has(r.current_club_name)) cache.set(r.current_club_name, FB.findClub(state, r.current_club_name));
-        const club = cache.get(r.current_club_name);
+        const comp = r.current_club_domestic_competition_id;
+        const ck = r.current_club_name + '|' + comp;
+        const country = comp ? FB.countryOfComp(comp) : undefined;
+        if (!cache.has(ck)) cache.set(ck, country === null ? null : FB.findClub(state, r.current_club_name, country));
+        const club = cache.get(ck);
         if (!club) continue;
         const birth = r.date_of_birth ? new Date(r.date_of_birth) : null;
         const age = birth && !isNaN(birth) ? state.season - birth.getFullYear() : 26;

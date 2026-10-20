@@ -16,6 +16,20 @@
   FB.LEAGUE_KEYS = ['A', 'B', 'C', 'D'];
   FB.leagueKey = div => FB.LEAGUE_KEYS[div];
 
+  // ---------- Ligas do mundo ----------
+  // Clubes estrangeiros têm div 5 e lg = país da liga ('ARG', 'ENG'...). A competição da liga é 'L-' + país.
+  FB.LEAGUES = {};
+  for (const L of (FB.PACK_MUNDO || { leagues: [] }).leagues) FB.LEAGUES[L.key] = L;
+  FB.UEFA = ['ENG', 'ESP', 'ITA', 'GER', 'FRA', 'POR', 'NED'];
+  FB.confOf = t => (t.country === 'BRA' ? 'CONMEBOL' : FB.LEAGUES[t.country] ? FB.LEAGUES[t.country].conf : 'CONMEBOL');
+  FB.compKeyOf = t => (t.div <= 3 ? FB.LEAGUE_KEYS[t.div] : t.div === 5 && t.lg ? 'L-' + t.lg : null);
+  FB.divName = t => (t.div === 5 && t.lg && FB.LEAGUES[t.lg] ? FB.LEAGUES[t.lg].name : FB.DIV_NAMES[t.div]);
+  // Economia do clube: TV e patrocínio mensais, ingresso de referência, premiação da liga e reserva de caixa.
+  FB.econ = t => (t.div === 5 && t.lg && FB.LEAGUES[t.lg] ? FB.LEAGUES[t.lg].econ : {
+    tv: FB.TV_MONTH[t.div], sponsor: FB.SPONSOR_K[t.div], ticket: FB.REF_TICKET[t.div],
+    prize: FB.LEAGUE_PRIZE[t.div] || 0, reserve: [3e7, 6e6, 1.5e6, 5e5, 2e5, 8e6][t.div],
+  });
+
   // ---------- Jogadores ----------
 
   FB.calcValue = p => {
@@ -45,10 +59,11 @@
     if (age <= 20) pot += ri(6, 20);
     else if (age <= 23) pot += ri(2, 10);
     else if (age <= 26) pot += ri(0, 4);
-    let n = FB.randomName();
+    const country = opts.team ? opts.team.country : opts.country;
+    let n = FB.randomName(country);
     if (opts.team) {
       const taken = new Set(opts.team.squad.map(id => state.players[id].n));
-      for (let k = 0; k < 20 && taken.has(n); k++) n = FB.randomName();
+      for (let k = 0; k < 20 && taken.has(n); k++) n = FB.randomName(country);
     }
     const p = {
       id: state.nextPid++, n, pos, age, ovr, pot: clamp(pot, ovr, 95),
@@ -214,7 +229,7 @@
   FB.norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-  FB.addTeam = (state, c, div, fict) => {
+  FB.addTeam = (state, c, div, fict, lg = null) => {
     const foreign = div === 5;
     let name = c.name, short = c.short;
     if (fict) {
@@ -233,12 +248,15 @@
     }
     const t = {
       id: state.teams.length, name, short, city: c.city, uf: foreign ? null : c.uf, country: foreign ? c.uf : 'BRA',
-      c1: c.c1, c2: c.c2, div, base: c.str + rf(-1, 1), fans: c.fans, cap: c.cap, ticket: FB.REF_TICKET[div],
+      lg: foreign ? lg : null,
+      c1: c.c1, c2: c.c2, div, base: c.str + rf(-1, 1), fans: c.fans, cap: c.cap, ticket: 0,
       cash: 0, squad: [], lineup: [], formation: pick(Object.keys(FB.FORMATIONS)), posture: 'equilibrado',
       press: 'media', training: 'equilibrado', titles: {}, form: [],
       keys: [FB.norm(name), ...(fict ? [] : c.alias.map(FB.norm))],
     };
-    t.cash = Math.round((FB.TV_MONTH[div] + FB.SPONSOR_K[div] * t.fans / 1000) * rf(2, 4) / 10000) * 10000;
+    const ec = FB.econ(t);
+    t.ticket = ec.ticket;
+    t.cash = Math.round((ec.tv + ec.sponsor * t.fans / 1000) * rf(2, 4) / 10000) * 10000;
     state.teams.push(t);
     return t;
   };
@@ -263,10 +281,11 @@
     state.season = pack.season;
     const fict = opts.pack === 'ficticio';
     pack.divs.forEach((list, div) => list.forEach(line => FB.addTeam(state, FB.parseLine(line), div, fict)));
-    pack.foreign.forEach(line => FB.addTeam(state, FB.parseLine(line), 5, fict));
+    for (const L of FB.PACK_MUNDO.leagues) L.teams.forEach(line => FB.addTeam(state, FB.parseLine(line), 5, fict, L.key));
     FB.addFillers(state);
     for (const t of state.teams) FB.makeSquad(state, t);
     FB.refreshFreeAgents(state);
+    state.world = 1;
     FB.initialQualifiers(state);
     FB.setupSeason(state);
     return state;
@@ -303,19 +322,57 @@
   FB.initialQualifiers = state => {
     const A = state.teams.filter(t => t.div === 0).sort((a, b) => FB.teamStrength(state, b) - FB.teamStrength(state, a)).map(t => t.id);
     state.qual = { LIB: A.slice(0, 7), SUL: A.slice(7, 13), SUP: [A[0], A[1]] };
+    Object.assign(state.qual, FB.foreignQualifiers(state, false));
+  };
+
+  // Vagas por país nas copas continentais (o Brasil usa state.qual.LIB/SUL).
+  const QUOTAS = {
+    LIB: { ARG: 6, COL: 3, URU: 3, PAR: 3, CHI: 3, ECU: 3, PER: 2, BOL: 1, VEN: 1 },
+    SUL: { ARG: 6, COL: 4, URU: 3, PAR: 3, CHI: 3, ECU: 3, PER: 2, BOL: 1, VEN: 1 },
+    UCL: { ENG: 5, ESP: 5, ITA: 5, GER: 5, FRA: 4, POR: 4, NED: 4 },
+    UEL: { ENG: 5, ESP: 5, ITA: 5, GER: 5, FRA: 4, POR: 4, NED: 4 },
+  };
+  // Pela tabela da liga que acabou (fromTables) ou, na primeira temporada, pela força dos elencos.
+  FB.foreignQualifiers = (state, fromTables) => {
+    const ranked = {};
+    for (const t of state.teams) {
+      if (t.div !== 5) continue;
+      const c = t.country;
+      if (!ranked[c]) {
+        const comp = fromTables && state.comps['L-' + c];
+        ranked[c] = comp ? FB.groupTable(state, comp.phases[0].groups[0]).map(r => r.id) : null;
+      }
+    }
+    for (const c of Object.keys(ranked)) {
+      const ids = state.teams.filter(t => t.div === 5 && t.country === c).map(t => t.id);
+      const order = (ranked[c] || []).filter(id => ids.includes(id));
+      const rest = ids.filter(id => !order.includes(id)).sort((a, b) => FB.teamStrength(state, state.teams[b]) - FB.teamStrength(state, state.teams[a]));
+      ranked[c] = order.concat(rest);
+    }
+    const out = {};
+    for (const [first, second] of [['LIB', 'SUL'], ['UCL', 'UEL']]) {
+      out['F' + first] = []; out['F' + second] = [];
+      for (const [c, n] of Object.entries(QUOTAS[first])) {
+        const list = ranked[c] || [];
+        out['F' + first].push(...list.slice(0, n));
+        out['F' + second].push(...list.slice(n, n + QUOTAS[second][c]));
+      }
+    }
+    return out;
   };
 
   // ---------- Competições ----------
 
   FB.roundRobin = ids => {
     const arr = shuffle(ids.slice());
+    if (arr.length % 2) arr.push(-1); // folga: quem enfrenta -1 não joga na rodada
     const n = arr.length;
     const rounds = [];
     for (let r = 0; r < n - 1; r++) {
       const m = [];
       for (let i = 0; i < n / 2; i++) {
         const a = arr[i], b = arr[n - 1 - i];
-        m.push((r + i) % 2 ? [b, a] : [a, b]);
+        if (a !== -1 && b !== -1) m.push((r + i) % 2 ? [b, a] : [a, b]);
       }
       rounds.push(m);
       arr.splice(1, 0, arr.pop());
@@ -327,7 +384,7 @@
     t: 'rr', name, legs,
     groups: groups.map((teams, gi) => {
       const all = FB.roundRobin(teams);
-      const fixtures = legs === 2 ? all : all.slice(0, teams.length - 1);
+      const fixtures = legs === 2 ? all : all.slice(0, all.length / 2);
       return { name: groups.length > 1 ? 'Grupo ' + 'ABCDEFGH'[gi] : '', teams: teams.slice(), fixtures, results: fixtures.map(r => r.map(() => null)) };
     }),
   });
@@ -395,12 +452,39 @@
     const q = state.qual;
     const SUP = newComp(state, 'SUP', 'Supercopa do Brasil', 'Supercopa', 'SUP', 'copa', q.SUP);
     SUP.phases.push(makeKO('Final', [q.SUP], 1, { neutral: true }));
-    const foreign = T.filter(t => t.div === 5).map(t => ({ id: t.id, s: FB.teamStrength(state, t) + rf(-4, 4) })).sort((a, b) => b.s - a.s).map(x => x.id);
-    const nLib = 32 - q.LIB.length;
-    const lib = q.LIB.concat(foreign.slice(0, nLib));
-    const sul = q.SUL.concat(foreign.slice(nLib, nLib + 32 - q.SUL.length));
-    for (const [key, name, teams] of [['LIB', 'Copa Libertadores', lib], ['SUL', 'Copa Sul-Americana', sul]]) {
-      const c = newComp(state, key, name, key === 'LIB' ? 'Libertadores' : 'Sul-Americana', 'CONT', 'continental', byStrength(state, teams));
+
+    // Ligas estrangeiras: pontos corridos (turno único quando a liga é grande).
+    for (const L of Object.values(FB.LEAGUES)) {
+      const ids = T.filter(t => t.div === 5 && t.lg === L.key).map(t => t.id);
+      if (ids.length < 4) continue;
+      const legs = L.legs || (ids.length > 20 ? 1 : 2);
+      const c = newComp(state, 'L-' + L.key, L.name, L.short, 'LEAGUE', 'liga', ids, { country: L.key });
+      c.phases.push(makeRR('Pontos corridos', [ids], legs));
+      c.sched = c.phases[0].groups[0].fixtures.map((_, r) => ({ ph: 0, r }));
+    }
+
+    // Copas continentais: 32 clubes, completados pela força se faltar alguém (saves antigos).
+    const pickCont = (base, foreignIds, conf, taken) => {
+      const ids = base.concat(foreignIds || []).filter((id, i, a) => a.indexOf(id) === i && !taken.has(id) && T[id]);
+      const pool = T.filter(t => (t.div === 5 || (conf === 'CONMEBOL' && t.div <= 1)) && FB.confOf(t) === conf && !ids.includes(t.id) && !taken.has(t.id))
+        .map(t => ({ id: t.id, s: FB.teamStrength(state, t) + rf(-4, 4) })).sort((a, b) => b.s - a.s).map(x => x.id);
+      while (ids.length < 32 && pool.length) ids.push(pool.shift());
+      ids.length = Math.min(ids.length, 32);
+      ids.forEach(id => taken.add(id));
+      return ids;
+    };
+    const taken = new Set();
+    const conts = [
+      ['LIB', 'Copa Libertadores', 'Libertadores', pickCont(q.LIB, q.FLIB, 'CONMEBOL', taken)],
+      ['SUL', 'Copa Sul-Americana', 'Sul-Americana', pickCont(q.SUL, q.FSUL, 'CONMEBOL', taken)],
+    ];
+    if (T.some(t => t.div === 5 && FB.confOf(t) === 'UEFA')) {
+      conts.push(['UCL', 'Liga dos Campeões', 'Champions', pickCont([], q.FUCL, 'UEFA', taken)]);
+      conts.push(['UEL', 'Liga Europa', 'Liga Europa', pickCont([], q.FUEL, 'UEFA', taken)]);
+    }
+    for (const [key, name, short, teams] of conts) {
+      if (teams.length < 32) continue;
+      const c = newComp(state, key, name, short, 'CONT', 'continental', byStrength(state, teams));
       const pots = [0, 1, 2, 3].map(k => shuffle(c.teams.slice(k * 8, k * 8 + 8)));
       c.phases.push(makeRR('Fase de grupos', [0, 1, 2, 3, 4, 5, 6, 7].map(g => pots.map(p => p[g])), 2));
     }
@@ -459,7 +543,36 @@
       else if (CDB_AFTER.includes(r + 1)) add(sat + 4, [{ key: 'CB', k: cb++ }]);
       sat += 7;
     }
-    state.dates = dates;
+
+    // Ligas estrangeiras: rodadas distribuídas pelos domingos do ano; Champions e Liga Europa na quarta e na quinta.
+    const jan = new Date(state.season, 0, 25);
+    while (jan.getDay() !== 0) jan.setDate(jan.getDate() + 1);
+    const sun0 = FB.dayOfYear(jan);
+    const W = Math.floor((FB.dayOfYear(new Date(state.season, 11, 6)) - sun0) / 7) + 1;
+    const sundays = new Map();
+    for (const c of Object.values(state.comps)) {
+      if (!c.key.startsWith('L-')) continue;
+      const R = c.sched.length;
+      for (let r = 0; r < R; r++) {
+        const w = Math.floor(r * W / R);
+        if (!sundays.has(w)) sundays.set(w, []);
+        sundays.get(w).push({ key: c.key, k: r });
+      }
+    }
+    for (const [w, slots] of sundays) add(sun0 + w * 7, slots);
+    const UEFA_AFTER = [6, 8, 10, 12, 14, 16, 22, 24, 28, 30, 34, 36, 40];
+    UEFA_AFTER.forEach((w, k) => {
+      const slots = ['UCL', 'UEL'].filter(key => state.comps[key]).map(key => ({ key, k }));
+      add(sun0 + w * 7 + 3, slots);
+    });
+
+    // Junta datas no mesmo dia e ordena.
+    const byDay = new Map();
+    for (const d of dates) {
+      if (byDay.has(d.day)) byDay.get(d.day).slots.push(...d.slots);
+      else byDay.set(d.day, { day: d.day, slots: d.slots.slice() });
+    }
+    state.dates = [...byDay.values()].sort((a, b) => a.day - b.day);
   };
 
   FB.today = state => {
@@ -505,9 +618,9 @@
   // Posição do clube na sua liga (Série D: posição no grupo).
   FB.leagueStanding = (state, tid) => {
     const t = state.teams[tid];
-    if (t.div > 3) return null;
-    const key = FB.leagueKey(t.div);
-    const c = state.comps[key];
+    const key = FB.compKeyOf(t);
+    const c = key && state.comps[key];
+    if (!c || !c.phases[0]) return null;
     const g = c.phases[0].groups.find(x => x.teams.includes(tid));
     if (!g) return null;
     const rows = FB.groupTable(state, g);
@@ -533,6 +646,7 @@
   FB.PHASE_PRIZE = {
     CB: [1e6, 1.5e6, 3e6, 4e6, 8e6, 40e6], LIB: [6e6, 4e6, 5e6, 6e6, 60e6], SUL: [2e6, 1.5e6, 2e6, 3e6, 25e6],
     EST: [2e5, 4e5, 2e6], SUP: [8e6], C: [0, 0, 1.5e6], D: [0, 2e5, 3e5, 3e5, 5e5],
+    UCL: [90e6, 60e6, 75e6, 90e6, 120e6], UEL: [25e6, 15e6, 20e6, 30e6, 50e6],
   };
 
   // Executado quando a última rodada de uma fase termina.
@@ -633,7 +747,9 @@
           reseed(comp, gs.map(g => g[0]).concat(gs.map(g => g[1])));
           comp.phases.push(makeKO(name, pairs, 2));
           const br = pairs.flat().filter(id => T[id].div <= 3);
-          FB.news(state, 'atualizacao', `${comp.short}: definidos os classificados`, `Brasileiros nas oitavas: ${br.map(id => T[id].name).join(', ') || 'nenhum'}.`);
+          FB.news(state, 'atualizacao', `${comp.short}: definidos os classificados`, comp.key === 'LIB' || comp.key === 'SUL'
+            ? `Brasileiros nas oitavas: ${br.map(id => T[id].name).join(', ') || 'nenhum'}.`
+            : `Classificados às oitavas: ${pairs.flat().map(id => T[id].short).join(', ')}.`);
         } else if (ph < 4) {
           const w = winnersOf(P);
           const pairs = [];
@@ -1407,10 +1523,10 @@
   FB.attendance = (state, hId, aId, comp) => {
     const t = state.teams[hId];
     const opp = state.teams[aId];
-    const ref = FB.REF_TICKET[t.div];
+    const ref = FB.econ(t).ticket;
     const form = (t.form || []).slice(-5);
     let occ = 0.6 + form.reduce((s, f) => s + (f === 'V' ? 0.03 : f === 'D' ? -0.03 : 0), 0);
-    if (opp.div < t.div || opp.div === 5) occ += 0.12;
+    if (opp.country !== t.country || FB.teamStrength(state, opp) > FB.teamStrength(state, t) + 3) occ += 0.12;
     if (comp && comp.ko) occ += 0.08;
     if (comp && comp.final) occ += 0.25;
     occ *= Math.pow(ref / Math.max(1, t.ticket), 0.9);
@@ -1434,8 +1550,9 @@
     for (let m = m0 + 1; m <= m1; m++) {
       FB.boardMonthly(state, m - 1);
       for (const t of state.teams) {
-        FB.money(state, t.id, FB.TV_MONTH[t.div], 'tv');
-        FB.money(state, t.id, Math.round(FB.SPONSOR_K[t.div] * t.fans / 1000), 'patrocinio');
+        const ec = FB.econ(t);
+        FB.money(state, t.id, ec.tv, 'tv');
+        FB.money(state, t.id, Math.round(ec.sponsor * t.fans / 1000), 'patrocinio');
         FB.money(state, t.id, -FB.payroll(state, t), 'salarios');
         FB.money(state, t.id, -Math.round(t.cap * 8), 'manutencao');
       }
@@ -1446,13 +1563,21 @@
 
   FB.setObjective = state => {
     const t = state.teams[state.userId];
-    if (t.div > 3) { state.board.target = 1; state.board.text = 'Fazer boa campanha'; return; }
-    const c = state.comps[FB.leagueKey(t.div)];
+    const key = FB.compKeyOf(t);
+    if (!key || !state.comps[key]) { state.board.target = 1; state.board.text = 'Fazer boa campanha'; return; }
+    const c = state.comps[key];
     const g = c.phases[0].groups.find(x => x.teams.includes(t.id));
     const ranked = g.teams.map(id => ({ id, s: FB.teamStrength(state, state.teams[id]) })).sort((a, b) => b.s - a.s);
     const exp = ranked.findIndex(x => x.id === t.id) + 1;
     let target, text;
-    if (t.div === 0) {
+    if (t.div === 5) {
+      const n = g.teams.length;
+      const cont = FB.confOf(t) === 'UEFA' ? 'Champions' : 'Libertadores';
+      const q = (FB.confOf(t) === 'UEFA' ? QUOTAS.UCL : QUOTAS.LIB)[t.lg] || 2;
+      target = exp === 1 ? 1 : exp <= q ? q : exp <= Math.round(n / 2) ? Math.round(n / 2) : n - 3;
+      text = target === 1 ? `Ser campeão da ${c.short}` : target === q ? `Vaga na ${cont} (top ${q})`
+        : target === Math.round(n / 2) ? 'Terminar na metade de cima' : `Não terminar entre os 3 últimos`;
+    } else if (t.div === 0) {
       target = exp === 1 ? 1 : exp <= 4 ? 4 : exp <= 8 ? 6 : exp <= 12 ? 12 : 16;
       text = { 1: 'Ser campeão brasileiro', 4: 'Terminar no G4', 6: 'Vaga na Libertadores (G6)', 12: 'Vaga na Sul-Americana', 16: 'Evitar o rebaixamento' }[target];
     } else if (t.div === 1) {
@@ -1498,12 +1623,15 @@
   FB.jobOffers = (state, better) => {
     const cur = state.teams[state.userId];
     let pool;
+    const str = t => FB.teamStrength(state, t);
+    const playable = t => t.id !== cur.id && t.div !== 4 && FB.compKeyOf(t);
     if (better) {
-      pool = state.teams.filter(t => t.id !== cur.id && t.div <= 3 && (t.div < cur.div || (t.div === cur.div && FB.teamStrength(state, t) > FB.teamStrength(state, cur))));
+      // Clubes um pouco mais fortes, de qualquer país.
+      pool = state.teams.filter(t => playable(t) && str(t) > str(cur) + 1 && str(t) <= str(cur) + 8);
     } else {
-      pool = state.teams.filter(t => t.id !== cur.id && t.div <= 3 && t.div >= Math.min(3, cur.div));
-      pool.sort((a, b) => FB.teamStrength(state, a) - FB.teamStrength(state, b));
-      pool = pool.slice(0, Math.max(8, Math.floor(pool.length / 2)));
+      pool = state.teams.filter(t => playable(t) && str(t) <= str(cur) + 1);
+      pool.sort((a, b) => str(a) - str(b));
+      pool = pool.slice(Math.floor(pool.length / 3));
     }
     return shuffle(pool).slice(0, 3).map(t => t.id);
   };
@@ -1529,7 +1657,7 @@
     t.formation = '4-4-2';
     t.lineup = FB.bestLineup(state, t);
     FB.setObjective(state);
-    FB.msg(state, `Bem-vindo ao ${t.name}!`, `A diretoria apresentou ${state.coach} como novo treinador. Objetivo na ${FB.DIV_NAMES[t.div]}: ${state.board.text}.`, { from: 'Diretoria' });
+    FB.msg(state, `Bem-vindo ao ${t.name}!`, `A diretoria apresentou ${state.coach} como novo treinador. Objetivo na ${FB.divName(t)}: ${state.board.text}.`, { from: 'Diretoria' });
     FB.boardSetup(state);
     FB.newContract(state);
     state.started = Date.now();
@@ -1572,7 +1700,7 @@
     const base = Math.max(p.sal, FB.calcSalary(p));
     const to = state.teams[toTid];
     const from = p.t != null ? state.teams[p.t] : null;
-    const k = from && to.div > from.div && to.div !== 5 ? 1.35 : 1.1;
+    const k = from && FB.econ(to).tv < FB.econ(from).tv * 0.7 ? 1.35 : 1.1;
     return Math.round(base * k / 1000) * 1000;
   };
 
@@ -1668,7 +1796,7 @@
 
   // Compra feita por um clube da IA, respeitando uma reserva de caixa.
   FB.aiBuy = (state, t, target) => {
-    const reserve = [3e7, 6e6, 1.5e6, 5e5, 2e5, 8e6][t.div];
+    const reserve = FB.econ(t).reserve;
     const budget = t.cash - reserve;
     if (budget <= 0 || t.squad.length >= FB.MAX_SQUAD - 2) return false;
     let p = target;
@@ -1685,7 +1813,7 @@
     if (fee > budget) return false;
     const from = state.teams[p.t];
     FB.transfer(state, p.id, t.id, fee, FB.wageDemand(state, p, t.id));
-    if (t.div <= 1 || from.div <= 1 || fee >= 5e6) {
+    if (t.div <= 1 || from.div <= 1 || fee >= 6e7) {
       FB.news(state, 'mercado', `Fechado: ${p.n} no ${t.name}`, `O ${t.name} acertou a contratação de ${p.n}, ex-${from.name}, por ${FB.fmtMoney(fee)}.`, { team: t.id });
     }
     if (t.squad.length > 30) {
@@ -1704,7 +1832,7 @@
       if (m.offer && !m.offer.done && FB.today(state) - m.day >= 7) { m.offer.done = true; m.offer.result = 'Expirada'; }
     }
     if (FB.windowOpen(state)) {
-      const buyers = state.teams.filter(t => t.id !== me.id && t.div <= 3 && t.squad.length < FB.MAX_SQUAD - 2);
+      const buyers = state.teams.filter(t => t.id !== me.id && t.div !== 4 && t.squad.length < FB.MAX_SQUAD - 2);
       const mkOffer = (p, k) => {
         const amount = Math.round(FB.calcValue(p) * k / 10000) * 10000;
         const cands = buyers.filter(t => t.cash > amount * 1.5 && t.base >= p.ovr - 10);
@@ -1730,8 +1858,8 @@
         }
       }
       // Clubes com caixa sobrando têm mais chance de ir ao mercado.
-      const rich = state.teams.filter(t => t.id !== me.id && t.div !== 4 && t.cash > [3e7, 6e6, 1.5e6, 5e5, 2e5, 8e6][t.div] * 2);
-      for (const t of shuffle(rich).slice(0, 5)) FB.aiBuy(state, t);
+      const rich = state.teams.filter(t => t.id !== me.id && t.div !== 4 && t.cash > FB.econ(t).reserve * 2);
+      for (const t of shuffle(rich).slice(0, 8)) FB.aiBuy(state, t);
     }
     for (const t of state.teams) {
       if (t.id === me.id || t.squad.length >= (t.div === 4 ? 16 : FB.MIN_SQUAD + 2) || !state.free.length) continue;
@@ -1860,8 +1988,8 @@
   FB.loanSuitors = (state, pid) => {
     const p = state.players[pid];
     const me = state.teams[state.userId];
-    const cands = state.teams.filter(t => t.id !== me.id && t.div <= 3 && t.div >= me.div && t.squad.length < FB.MAX_SQUAD - 4 &&
-      FB.teamStrength(state, t) <= p.ovr + 6);
+    const cands = state.teams.filter(t => t.id !== me.id && t.div !== 4 && FB.compKeyOf(t) && t.squad.length < FB.MAX_SQUAD - 4 &&
+      FB.teamStrength(state, t) <= Math.min(p.ovr + 6, FB.teamStrength(state, me)));
     return shuffle(cands).slice(0, 3).map(t => t.id);
   };
 
@@ -1913,7 +2041,7 @@
     const C = state.comps;
     const st = FB.leagueStanding(state, user.id);
     const summary = {
-      season: state.season, userPos: st ? st.pos : null, userDiv: user.div, target: state.board.target, objective: state.board.text,
+      season: state.season, userPos: st ? st.pos : null, userDiv: user.div, userDivName: FB.divName(user), target: state.board.target, objective: state.board.text,
       champions: Object.values(C).filter(c => c.champion != null && (c.kind !== 'estadual' || c.teams.includes(user.id)))
         .map(c => ({ key: c.key, comp: c.name, tid: c.champion })),
       up: [], down: [], offers: [], retired: [], youth: [], prize: 0,
@@ -1929,6 +2057,16 @@
       });
     });
 
+    for (const c of Object.values(C)) {
+      if (!c.key.startsWith('L-') || !FB.LEAGUES[c.country]) continue;
+      const rows = FB.groupTable(state, c.phases[0].groups[0]);
+      rows.forEach((r, i) => {
+        const prize = Math.round(FB.LEAGUES[c.country].econ.prize / rows.length * 2 * (1 - (i / rows.length) * 0.9) / 10000) * 10000;
+        FB.money(state, r.id, prize, 'premios');
+        if (r.id === user.id) summary.prize = prize;
+      });
+    }
+
     // Acesso e rebaixamento
     const tA = FB.groupTable(state, C.A.phases[0].groups[0]).map(r => r.id);
     const tB = FB.groupTable(state, C.B.phases[0].groups[0]).map(r => r.id);
@@ -1942,7 +2080,7 @@
         if (div < from) summary.up.push(id); else summary.down.push(id);
         T[id].div = div;
         T[id].base += div < from ? 1.5 : -1.5;
-        T[id].ticket = FB.REF_TICKET[div];
+        T[id].ticket = FB.econ(T[id]).ticket;
       }
     }
 
@@ -1951,7 +2089,7 @@
     const lib = tA.slice(0, 6);
     lib.push(cbChamp != null && !lib.includes(cbChamp) ? cbChamp : tA[6]);
     const sul = tA.filter(id => !lib.includes(id)).slice(0, 6);
-    state.qual = { LIB: lib, SUL: sul, SUP: [tA[0], cbChamp != null && cbChamp !== tA[0] ? cbChamp : tA[1]] };
+    state.qual = { LIB: lib, SUL: sul, SUP: [tA[0], cbChamp != null && cbChamp !== tA[0] ? cbChamp : tA[1]], ...FB.foreignQualifiers(state, true) };
 
     // Diretoria
     if (st && !state.fired) {
@@ -1963,7 +2101,7 @@
       else if (met && Math.random() < 0.7) summary.offers = FB.jobOffers(state, true).slice(0, 2);
     }
 
-    state.history.unshift({ season: state.season, team: user.id, div: summary.userDiv, pos: summary.userPos, titles: summary.champions.filter(c => c.tid === user.id).map(c => c.comp) });
+    state.history.unshift({ season: state.season, team: user.id, div: summary.userDiv, lgName: summary.userDivName, pos: summary.userPos, titles: summary.champions.filter(c => c.tid === user.id).map(c => c.comp) });
 
     summary.loans = FB.endLoans(state);
     FB.developPlayers(state, summary);
@@ -2052,12 +2190,51 @@
   };
 
   // Completa saves antigos com os campos novos.
+  // Campos de jogador com valor padrão não vão para o save (o mundo tem mais de 10 mil jogadores) e voltam ao carregar.
+  const P_DEFAULTS = { j: 0, rs: 0, inj: null, frag: null, sale: false, sc: false, lastRt: null };
+  const P_OBJS = ['gl', 'yc', 'sus'];
+  FB.slim = function (k, v) {
+    if (this && this.pos && this.n !== undefined) {
+      if (k in P_DEFAULTS && v === P_DEFAULTS[k]) return undefined;
+      if (P_OBJS.includes(k) && v && typeof v === 'object' && !Object.keys(v).length) return undefined;
+    }
+    return v;
+  };
+  const restorePlayers = state => {
+    for (const p of Object.values(state.players || {})) {
+      for (const k in P_DEFAULTS) if (p[k] === undefined) p[k] = P_DEFAULTS[k];
+      for (const k of P_OBJS) if (!p[k]) p[k] = {};
+    }
+  };
+
   FB.migrate = state => {
     if (!state) return state;
+    restorePlayers(state);
     for (const m of state.inbox || []) if (!m.from) m.from = m.offer ? 'Mercado' : m.injury ? 'Departamento médico' : 'Clube';
     if (state.userId != null && !state.board.goals && !state.fired) FB.boardSetup(state, true);
     if (state.userId != null && !state.contract && !state.fired) FB.newContract(state);
+    if (!state.world && state.teams) FB.addWorld(state);
     return state;
+  };
+
+  // Saves anteriores às ligas do mundo: os estrangeiros que já existem ganham liga e entram os clubes que faltam.
+  // As ligas novas começam a ser disputadas na temporada seguinte.
+  FB.addWorld = state => {
+    const fict = state.pack === 'ficticio';
+    const used = new Set();
+    for (const L of FB.PACK_MUNDO.leagues) {
+      for (const line of L.teams) {
+        const c = FB.parseLine(line);
+        const ex = state.teams.find(t => t.div === 5 && t.country === L.key && !used.has(t.id) &&
+          (t.short === c.short || (t.keys || []).includes(FB.norm(c.name)) || (fict && t.city === c.city)));
+        if (ex) { used.add(ex.id); ex.lg = L.key; ex.ticket = L.econ.ticket; continue; }
+        const t = FB.addTeam(state, c, 5, fict, L.key);
+        used.add(t.id);
+        FB.makeSquad(state, t);
+      }
+    }
+    for (const t of state.teams) if (t.div === 5 && !t.lg && FB.LEAGUES[t.country]) t.lg = t.country;
+    state.world = 1;
   };
 
   // ---------- Persistência ----------
@@ -2145,9 +2322,9 @@
   FB.slotMeta = state => {
     const t = state.teams[state.userId];
     const st = FB.leagueStanding(state, t.id);
-    const lg = state.comps[FB.leagueKey(t.div)];
+    const lg = state.comps[FB.compKeyOf(t)];
     return {
-      coach: state.coach, club: t.name, short: t.short, c1: t.c1, c2: t.c2, div: t.div, season: state.season,
+      coach: state.coach, club: t.name, short: t.short, c1: t.c1, c2: t.c2, div: t.div, divName: FB.divName(t), season: state.season,
       round: lg ? lg.md : 0, rounds: lg ? lg.sched.length : 0, pos: st && st.row.j ? st.pos : null,
       fired: !!state.fired, started: state.started || null, updated: Date.now(),
     };
@@ -2175,7 +2352,7 @@
     const n = FB.slot;
     if (n == null || !state || state.userId == null) return false;
     let raw;
-    try { raw = JSON.stringify(state); } catch (e) { return false; }
+    try { raw = JSON.stringify(state, FB.slim); } catch (e) { return false; }
     const meta = FB.slotMeta(state);
     setMeta(n, meta);
     jobs.set(n, { raw, t: meta.updated });
