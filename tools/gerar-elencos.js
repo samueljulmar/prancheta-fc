@@ -78,6 +78,7 @@ const DAY = 86400000;
   const clubCache = new Map();
   const unmatched = new Map();
   const picked = new Map(); // player_id -> dados
+  const sources = new Map(); // clube do jogo -> Map("nome na base [liga]" -> jogadores)
   for (const r of rows) {
     if (!r.current_club_name || (maxSeason && +r.last_season < maxSeason - 1)) continue;
     if (!clubCache.has(r.current_club_name)) clubCache.set(r.current_club_name, FB.findClub(world, r.current_club_name));
@@ -87,6 +88,9 @@ const DAY = 86400000;
     const eur = num(r.market_value_in_eur);
     const birth = r.date_of_birth ? new Date(r.date_of_birth) : null;
     if (!pos || !eur || !r.name || !birth || isNaN(birth)) continue;
+    const src = `${r.current_club_name} [${r.current_club_domestic_competition_id || '?'}]`;
+    if (!sources.has(club)) sources.set(club, new Map());
+    sources.get(club).set(src, (sources.get(club).get(src) || 0) + 1);
     picked.set(r.player_id, { name: r.name, club, pos, age: SEASON - birth.getFullYear(), eur, peak: num(r.highest_market_value_in_eur), prev: null, minutes: null });
   }
 
@@ -158,7 +162,10 @@ const DAY = 86400000;
     if (!teams.length) continue;
     const ok = teams.filter(t => (byClub.get(t) || 0) >= 11);
     lines.push(`${div === 5 ? 'Sul-americanos' : FB.DIV_NAMES[div]}: ${ok.length} de ${teams.length} clubes com elenco real (11+ jogadores)`);
-    for (const t of teams) lines.push(`  ${(byClub.get(t) || 0) >= 11 ? '✔' : '✘'} ${t.name}: ${byClub.get(t) || 0}`);
+    for (const t of teams) {
+      const src = [...(sources.get(t) || [])].map(([n, c]) => `${n} ${c}`).join(' | ');
+      lines.push(`  ${(byClub.get(t) || 0) >= 11 ? '✔' : '✘'} ${t.name}: ${byClub.get(t) || 0}${src ? '  ← ' + src : ''}`);
+    }
   }
   if (unmatched.size) {
     lines.push('', 'Clubes da base sem correspondência no jogo (os 20 com mais jogadores):');
