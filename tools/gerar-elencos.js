@@ -75,23 +75,55 @@ const DAY = 86400000;
   const rows = [];
   let maxSeason = 0;
   await eachRow(playersFile, r => { rows.push(r); maxSeason = Math.max(maxSeason, +r.last_season || 0); });
+  // Só casa clubes do mesmo país: a liga da base (BRA1, ARG1, COL1...) diz o país do clube.
+  const COUNTRY_OF = [[/^BRA/, 'BRA'], [/^AR/, 'ARG'], [/^COL/, 'COL'], [/^UR/, 'URU'], [/^CL/, 'CHI'], [/^PAR|^PR1/, 'PAR'],
+    [/^EC/, 'ECU'], [/^PE|^TDeA/, 'PER'], [/^BO/, 'BOL'], [/^VZ|^VE/, 'VEN']];
+  const countryOf = comp => (COUNTRY_OF.find(([re]) => re.test(comp || '')) || [])[1] || null;
+  const byCountry = new Map();
+  for (const t of world.teams) {
+    if (t.div === 4) continue;
+    if (!byCountry.has(t.country)) byCountry.set(t.country, { teams: [] });
+    byCountry.get(t.country).teams.push(t);
+  }
+  // Grafias da base diferentes das do jogo.
+  const FIX = { 'Mirasol Futebol Clube': 'Mirassol Futebol Clube' };
+
   const clubCache = new Map();
   const unmatched = new Map();
-  const picked = new Map(); // player_id -> dados
-  const sources = new Map(); // clube do jogo -> Map("nome na base [liga]" -> jogadores)
+  const cands = []; // jogadores com clube do jogo, antes de escolher a origem certa de cada clube
   for (const r of rows) {
     if (!r.current_club_name || (maxSeason && +r.last_season < maxSeason - 1)) continue;
-    if (!clubCache.has(r.current_club_name)) clubCache.set(r.current_club_name, FB.findClub(world, r.current_club_name));
-    const club = clubCache.get(r.current_club_name);
+    const comp = r.current_club_domestic_competition_id;
+    const key = r.current_club_name + '|' + comp;
+    if (!clubCache.has(key)) {
+      const pool = byCountry.get(countryOf(comp));
+      clubCache.set(key, pool ? FB.findClub(pool, FIX[r.current_club_name] || r.current_club_name) : null);
+    }
+    const club = clubCache.get(key);
     if (!club) { unmatched.set(r.current_club_name, (unmatched.get(r.current_club_name) || 0) + 1); continue; }
     const pos = FB.parsePos(r.sub_position) || FB.parsePos(r.position);
     const eur = num(r.market_value_in_eur);
     const birth = r.date_of_birth ? new Date(r.date_of_birth) : null;
     if (!pos || !eur || !r.name || !birth || isNaN(birth)) continue;
-    const src = `${r.current_club_name} [${r.current_club_domestic_competition_id || '?'}]`;
-    if (!sources.has(club)) sources.set(club, new Map());
-    sources.get(club).set(src, (sources.get(club).get(src) || 0) + 1);
-    picked.set(r.player_id, { name: r.name, club, pos, age: SEASON - birth.getFullYear(), eur, peak: num(r.highest_market_value_in_eur), prev: null, minutes: null });
+    cands.push({ id: r.player_id, src: `${r.current_club_name} [${comp || '?'}]`, p: { name: r.name, club, pos, age: SEASON - birth.getFullYear(), eur, peak: num(r.highest_market_value_in_eur), prev: null, minutes: null } });
+  }
+
+  // Se dois clubes da base caem no mesmo clube do jogo (Estudiantes de La Plata e Estudiantes de Río Cuarto),
+  // fica o de maior valor de elenco; o outro vai para a lista de sem correspondência.
+  const sources = new Map(); // clube do jogo -> Map(origem -> { n, eur })
+  for (const c of cands) {
+    if (!sources.has(c.p.club)) sources.set(c.p.club, new Map());
+    const m = sources.get(c.p.club);
+    const o = m.get(c.src) || { n: 0, eur: 0 };
+    o.n++; o.eur += c.p.eur;
+    m.set(c.src, o);
+  }
+  const chosen = new Map();
+  for (const [club, m] of sources) chosen.set(club, [...m].sort((a, b) => b[1].eur - a[1].eur)[0][0]);
+  const picked = new Map(); // player_id -> dados
+  for (const c of cands) {
+    if (chosen.get(c.p.club) === c.src) picked.set(c.id, c.p);
+    else unmatched.set(c.src, (unmatched.get(c.src) || 0) + 1);
   }
 
   // 2. Valor de um ano antes da última avaliação (tendência de valorização).
@@ -163,7 +195,7 @@ const DAY = 86400000;
     const ok = teams.filter(t => (byClub.get(t) || 0) >= 11);
     lines.push(`${div === 5 ? 'Sul-americanos' : FB.DIV_NAMES[div]}: ${ok.length} de ${teams.length} clubes com elenco real (11+ jogadores)`);
     for (const t of teams) {
-      const src = [...(sources.get(t) || [])].map(([n, c]) => `${n} ${c}`).join(' | ');
+      const src = chosen.get(t) ? `${chosen.get(t)}` : '';
       lines.push(`  ${(byClub.get(t) || 0) >= 11 ? '✔' : '✘'} ${t.name}: ${byClub.get(t) || 0}${src ? '  ← ' + src : ''}`);
     }
   }
