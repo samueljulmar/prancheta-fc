@@ -916,10 +916,10 @@
   function galleryHtml() {
     const t = me();
     const titles = Object.entries(t.titles || {}).filter(([, n]) => n);
-    const names = { A: 'Série A', B: 'Série B', C: 'Série C', D: 'Série D', CB: 'Copa do Brasil', LIB: 'Libertadores', SUL: 'Sul-Americana', SUP: 'Supercopa' };
+    const names = { A: 'Série A', B: 'Série B', C: 'Série C', D: 'Série D', CB: 'Copa do Brasil', LIB: 'Libertadores', SUL: 'Sul-Americana', SUP: 'Supercopa', UCL: 'Liga dos Campeões', UEL: 'Liga Europa', MUN: 'Mundial de Clubes' };
     const big = S.champions.filter(c => !c.key.startsWith('E-') || T(c.tid).uf === t.uf);
     return `<div class="card"><h3>Sala de troféus · ${esc(t.name)}</h3>
-        ${titles.length ? titles.map(([k, n]) => `<div class="row between small" style="padding:3px 0"><span>${esc(names[k] || FB.UF_COMP[k.slice(2)] || k)}</span><b>${n}×</b></div>`).join('') : '<p class="muted small" style="margin:0">Nenhum título conquistado no jogo ainda.</p>'}
+        ${titles.length ? titles.map(([k, n]) => `<div class="row between small" style="padding:3px 0"><span>${esc(names[k] || (S.comps[k] && S.comps[k].name) || (k.startsWith('E-') && FB.UF_COMP[k.slice(2)]) || (k.startsWith('N-') && FB.CUP_NAMES[k.slice(2)]) || (k.startsWith('L-') && FB.LEAGUES[k.slice(2)] && FB.LEAGUES[k.slice(2)].name) || k)}</span><b>${n}×</b></div>`).join('') : '<p class="muted small" style="margin:0">Nenhum título conquistado no jogo ainda.</p>'}
         ${t.titlesText ? `<p class="muted small">Histórico real: ${esc(t.titlesText)}</p>` : ''}</div>
       ${big.length ? `<div class="list">${big.slice(0, 60).map(c => `<div class="item">${badge(T(c.tid), 26)}
         <div class="grow"><div class="name ellipsis">${esc(T(c.tid).name)}</div><div class="meta">${esc(c.comp)} ${c.season}</div></div></div>`).join('')}</div>` : '<div class="empty">Os campeões aparecem aqui ao fim de cada competição.</div>'}`;

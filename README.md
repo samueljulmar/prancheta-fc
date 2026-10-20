@@ -35,25 +35,36 @@ começo do Brasileirão e em julho; jogadores livres podem ser contratados a qua
 
 Além do Brasil, todas estas ligas são jogáveis: dá para começar a carreira nelas e receber propostas de clubes de lá.
 
-| Continente | Ligas |
-| --- | --- |
-| América do Sul | Argentina (30 clubes, turno único), Uruguai, Paraguai, Chile, Colômbia, Equador, Peru, Bolívia e Venezuela |
-| Europa | Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Liga Portugal e Eredivisie (composição 2025/26) |
+| País | Primeira divisão | Segunda divisão (sobem/caem) | Copa nacional |
+| --- | --- | --- | --- |
+| Argentina | Liga Profesional (30, turno único) | Primera Nacional (2) | Copa Argentina |
+| Inglaterra | Premier League | Championship (3) | FA Cup |
+| Espanha | La Liga | Segunda División (3) | Copa del Rey |
+| Itália | Serie A | Serie B (3) | Coppa Italia |
+| Alemanha | Bundesliga | 2. Bundesliga (2) | DFB-Pokal |
+| França | Ligue 1 | Ligue 2 (2) | Coupe de France |
+| Portugal | Liga Portugal | Liga Portugal 2 (2) | Taça de Portugal |
+| Holanda | Eredivisie | Eerste Divisie (2) | KNVB Beker |
+| Uruguai, Paraguai, Chile, Colômbia, Equador, Peru, Bolívia, Venezuela | primeira divisão | — | copa nacional de cada país |
 
-- As ligas estrangeiras são de pontos corridos e jogam aos domingos ao longo do ano; por enquanto só há a primeira divisão de
-  cada país (sem acesso nem rebaixamento lá fora). Nas ligas sul-americanas a composição de 2026 é aproximada.
-- **Libertadores e Sul-Americana** passam a ter vagas por país, pela tabela de cada liga (Argentina 6, Colômbia, Uruguai,
-  Paraguai, Chile e Equador 3, Peru 2, Bolívia e Venezuela 1, além dos brasileiros).
-- **Liga dos Campeões e Liga Europa**: 32 clubes cada, com vagas pelas ligas europeias, grupos e mata-mata.
+- As ligas estrangeiras são de pontos corridos e jogam aos domingos; as copas nacionais, às terças, em jogo único
+  (32, 16 ou 8 clubes conforme o país) com final em campo neutro. Nas segundas divisões ficaram de fora os times B
+  e "Jong". As composições sul-americanas de 2026 são aproximadas; as europeias seguem 2025/26.
+- **Libertadores e Sul-Americana** têm vagas por país, pela tabela de cada liga. **Liga dos Campeões e Liga Europa**:
+  32 clubes cada, com vagas pelas ligas europeias.
+- **Mundial de Clubes**: quando as quatro copas continentais terminam, campeões e vices de Libertadores e Champions,
+  os campeões da Sul-Americana e da Liga Europa e os dois clubes mais fortes que faltarem disputam o título em
+  dezembro, em campo neutro (quartas, semifinal e final).
 - Cada liga tem a própria economia (TV, patrocínio, ingresso e premiação); os jogadores gerados têm nomes do país do clube.
-- Carreiras antigas recebem os clubes novos ao abrir; as ligas novas começam na temporada seguinte.
+- Carreiras antigas recebem os clubes novos ao abrir; as ligas e copas novas começam na temporada seguinte.
 - Quando seu time não joga, *Avançar* simula as datas seguintes até o próximo jogo.
 
 ## Carreiras e painel
 
 - Até **3 carreiras salvas** ao mesmo tempo. A tela inicial mostra cada uma num cartão (clube, divisão, temporada,
-  rodada e posição) com os botões *Continuar* e *Apagar*. Os saves ficam no IndexedDB do navegador; a carreira da
-  versão anterior é migrada sozinha.
+  rodada e posição) com os botões *Continuar* e *Apagar*. Os saves ficam no IndexedDB do navegador, com uma cópia
+  reserva comprimida no localStorage (o Safari do iPhone às vezes derruba o IndexedDB em segundo plano); ao abrir,
+  vale a cópia mais recente. A carreira da versão anterior é migrada sozinha.
 - Ao assumir um clube, a **apresentação** mostra o seu contrato (salário e duração) e as metas da diretoria. O contrato
   é renovado na virada do ano, com aumento quando a diretoria está satisfeita.
 - O **painel** traz o próximo jogo (casa/fora, força dos dois times e dificuldade), o craque da última partida, uma dica

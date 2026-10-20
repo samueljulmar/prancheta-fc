@@ -1,5 +1,5 @@
 // Prancheta FC — cache offline. Mude a versão ao publicar arquivos novos.
-const CACHE = 'prancheta-v7';
+const CACHE = 'prancheta-v8';
 const FILES = ['./', 'index.html', 'app.css', 'data.js', 'pack-brasil.js', 'pack-mundo.js', 'medical.js', 'news.js', 'engine.js', 'board.js', 'importer.js', 'ui.js',
   'manifest.json', 'icon-192.png', 'icon-512.png'];
 

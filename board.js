@@ -42,7 +42,7 @@
       const share = rank / c.teams.length;
       let target;
       if (c.kind === 'estadual') target = rank === 0 ? 3 : share < 0.5 ? 1 : 0; // 3 = título
-      else if (c.key === 'CB') target = share < 0.1 ? 4 : share < 0.3 ? 3 : share < 0.6 ? 2 : 1;
+      else if (c.key === 'CB' || c.key.startsWith('N-')) target = share < 0.1 ? 4 : share < 0.3 ? 3 : share < 0.6 ? 2 : 1;
       else if (c.kind === 'continental') target = share < 0.15 ? 3 : share < 0.4 ? 2 : 1;
       else continue; // Supercopa é bônus
       const champ = target >= c.phaseNames.length;
