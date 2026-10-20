@@ -1504,10 +1504,16 @@
       render();
     },
     'setup-back': () => { ui.setup = null; render(); },
-    'slot-play': async d => {
+    'slot-play': async (d, el) => {
+      if (ui.opening) return;
       const n = +d.v;
-      const st = await FB.loadSlot(n);
-      if (!validSave(st)) { toast('Não consegui abrir esta carreira.', 3500); return; }
+      ui.opening = true;
+      el.disabled = true;
+      el.textContent = 'Abrindo…';
+      let st = null;
+      try { st = await FB.loadSlot(n); } catch (e) { st = null; }
+      ui.opening = false;
+      if (!validSave(st)) { render(); toast('Não consegui abrir esta carreira. Feche o app por completo, abra de novo e tente outra vez.', 5000); return; }
       enterSlot(n, st);
     },
     'slot-del': d => {

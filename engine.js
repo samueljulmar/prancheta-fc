@@ -2061,37 +2061,73 @@
   };
 
   // ---------- Persistência ----------
-  // Até 3 carreiras no IndexedDB: cada save passa de 1 MB, grande demais para várias no localStorage.
-  // O resumo de cada carreira fica no localStorage para a tela inicial abrir na hora.
+  // Até 3 carreiras. Cada save vai para o IndexedDB e, comprimido, para uma cópia reserva no localStorage:
+  // no iPhone o Safari às vezes derruba a conexão do IndexedDB quando o app vai para segundo plano.
+  // Ao abrir, vale a cópia mais recente. O resumo de cada carreira também fica no localStorage.
 
   FB.MAX_SLOTS = 3;
   FB.slot = null;
   const META_KEY = 'prancheta.slots';
+  const BAK_KEY = n => 'prancheta.bak.' + n;
   const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } };
   const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignora */ } };
-  // Sem IndexedDB, cada carreira vai para uma chave do localStorage (a 1ª é a mesma da versão anterior).
-  const lsKey = n => (n === 1 ? FB.SAVE_KEY : FB.SAVE_KEY + '.' + n);
+
+  // Uma operação travada não pode segurar o jogo: desiste depois de alguns segundos.
+  const timeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('tempo esgotado')), ms))]);
 
   let dbP = null;
-  const db = () => dbP || (dbP = new Promise((res, rej) => {
+  const db = () => dbP || (dbP = timeout(new Promise((res, rej) => {
     if (typeof indexedDB === 'undefined') { rej(new Error('IndexedDB indisponível')); return; }
     const r = indexedDB.open('prancheta', 1);
     r.onupgradeneeded = () => r.result.createObjectStore('saves');
-    r.onsuccess = () => res(r.result);
+    r.onsuccess = () => {
+      const d = r.result;
+      d.onclose = () => { dbP = null; };
+      d.onversionchange = () => { d.close(); dbP = null; };
+      res(d);
+    };
     r.onerror = () => rej(r.error);
-  }));
-  const idb = (mode, fn) => db().then(d => new Promise((res, rej) => {
+  }), 4000).catch(e => { dbP = null; if (e && e.message === 'tempo esgotado') idbStuck = true; throw e; }));
+  // Se a conexão caiu, reabre e tenta mais uma vez. Se travou, o IndexedDB fica de lado até o app ser reaberto.
+  let idbStuck = false;
+  const idb = (mode, fn, retry = true) => (idbStuck ? Promise.reject(new Error('IndexedDB travado')) : db()).then(d => timeout(new Promise((res, rej) => {
     const tx = d.transaction('saves', mode);
     const req = fn(tx.objectStore('saves'));
     tx.oncomplete = () => res(req.result);
-    tx.onerror = tx.onabort = () => rej(tx.error);
-  }));
-  const putRaw = (n, raw) => idb('readwrite', st => st.put(raw, n))
-    .then(() => { if (n !== 1) lsDel(lsKey(n)); },
-      () => { if (!lsSet(lsKey(n), raw)) throw new Error('Sem espaço para salvar'); });
-  const getRaw = n => idb('readonly', st => st.get(n)).catch(() => null).then(v => v ?? lsGet(lsKey(n)));
-  const delRaw = n => idb('readwrite', st => st.delete(n)).catch(() => {}).then(() => lsDel(lsKey(n)));
+    tx.onerror = tx.onabort = () => rej(tx.error || new Error('transação abortada'));
+  }), 4000)).catch(e => {
+    if (idbStuck) throw e;
+    if (e && e.message === 'tempo esgotado') { idbStuck = true; throw e; }
+    if (dbP) dbP.then(d => { try { d.close(); } catch (x) { /* ignora */ } }, () => {});
+    dbP = null;
+    if (retry) return idb(mode, fn, false);
+    throw e;
+  });
+
+  // Compressão gzip (base64) para a cópia reserva caber no localStorage.
+  const canZip = typeof CompressionStream !== 'undefined' && typeof Response !== 'undefined';
+  const zip = async str => {
+    const buf = new Uint8Array(await new Response(new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+  };
+  const unzip = async b64 => {
+    const bin = atob(b64);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  };
+
+  // Registros no IndexedDB: { t, raw } (saves antigos eram só o texto).
+  const getIdb = n => idb('readonly', st => st.get(n)).then(v => (typeof v === 'string' ? { t: 0, raw: v } : v || null), () => null);
+  const getBak = async n => {
+    try {
+      const b = JSON.parse(lsGet(BAK_KEY(n)));
+      return b && b.z && canZip ? { t: b.t, raw: await unzip(b.z) } : null;
+    } catch (e) { return null; }
+  };
 
   FB.slots = () => { try { return JSON.parse(lsGet(META_KEY)) || {}; } catch (e) { return {}; } };
   const setMeta = (n, m) => {
@@ -2117,23 +2153,53 @@
     };
   };
 
-  // As gravações entram numa fila para não chegarem fora de ordem.
-  let queue = Promise.resolve();
+  // Gravação em segundo plano. Se vários saves chegam seguidos, só o último de cada carreira é gravado.
+  const jobs = new Map();
+  let running = null;
   FB.onSaveError = null;
+  const flush = async () => {
+    while (jobs.size) {
+      const [n, job] = jobs.entries().next().value;
+      jobs.delete(n);
+      let ok = false;
+      // Primeiro a reserva local, que é rápida; depois o IndexedDB.
+      if (canZip) {
+        try { if (lsSet(BAK_KEY(n), JSON.stringify({ t: job.t, z: await zip(job.raw) }))) ok = true; } catch (e) { /* ignora */ }
+      }
+      try { await idb('readwrite', st => st.put({ t: job.t, raw: job.raw }, n)); ok = true; } catch (e) { /* fica a reserva */ }
+      if (!ok && FB.onSaveError) FB.onSaveError();
+    }
+    running = null;
+  };
   FB.save = state => {
     const n = FB.slot;
     if (n == null || !state || state.userId == null) return false;
     let raw;
     try { raw = JSON.stringify(state); } catch (e) { return false; }
-    setMeta(n, FB.slotMeta(state));
-    queue = queue.then(() => putRaw(n, raw)).catch(e => { if (FB.onSaveError) FB.onSaveError(e); });
+    const meta = FB.slotMeta(state);
+    setMeta(n, meta);
+    jobs.set(n, { raw, t: meta.updated });
+    if (!running) running = flush();
     return true;
   };
-  FB.loadSlot = n => queue.then(() => getRaw(n)).then(raw => (raw ? FB.migrate(JSON.parse(raw)) : null)).catch(() => null);
-  FB.deleteSlot = n => {
+  FB.flush = () => running || Promise.resolve();
+
+  // Abre a carreira pela cópia mais recente (IndexedDB ou reserva). Se uma estiver corrompida, tenta a outra.
+  FB.loadSlot = async n => {
+    await FB.flush();
+    const [a, b] = await Promise.all([getIdb(n), getBak(n)]);
+    const legacy = n === 1 ? lsGet(FB.SAVE_KEY) : null;
+    const list = [a, b, legacy ? { t: -1, raw: legacy } : null].filter(Boolean).sort((x, y) => y.t - x.t);
+    for (const c of list) {
+      try { return FB.migrate(JSON.parse(c.raw)); } catch (e) { /* tenta a próxima */ }
+    }
+    return null;
+  };
+  FB.deleteSlot = async n => {
     setMeta(n, null);
-    queue = queue.then(() => delRaw(n)).catch(() => {});
-    return queue;
+    jobs.delete(n);
+    lsDel(BAK_KEY(n));
+    await idb('readwrite', st => st.delete(n)).catch(() => {});
   };
 
   // A carreira salva pela versão anterior (uma só, no localStorage) vira a carreira 1.
@@ -2145,7 +2211,7 @@
     if (!state || state.userId == null) return;
     setMeta(1, FB.slotMeta(state));
     // Só apaga a cópia antiga depois de gravar no IndexedDB.
-    try { await idb('readwrite', st => st.put(raw, 1)); lsDel(FB.SAVE_KEY); } catch (e) { /* continua no localStorage */ }
+    try { await idb('readwrite', st => st.put({ t: 0, raw }, 1)); lsDel(FB.SAVE_KEY); } catch (e) { /* continua no localStorage */ }
   };
 
   FB.fmtMoney = v => {
